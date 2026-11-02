@@ -1,0 +1,85 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: Lint with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 asimov_myplugin --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 asimov_myplugin --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics
+
+    - name: Check formatting with black
+      run: |
+        black --check asimov_myplugin tests
+
+    - name: Type check with mypy
+      run: |
+        mypy asimov_myplugin --ignore-missing-imports
+      continue-on-error: true
+
+    - name: Test with pytest
+      run: |
+        pytest --cov=asimov_myplugin --cov-report=xml --cov-report=term
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  vocabulary:
+    # Checks the example blueprints (and this plugin's registered terms)
+    # against asimov's ledger vocabulary. Fails on unknown keys, keys under
+    # `myplugin:` which duplicate a standard term, and terms in
+    # asimov_myplugin/vocabulary.yaml which clash with core.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        # `asimov vocabulary` arrives with etive-io/asimov#175. Drop this line
+        # (and raise the asimov floor in pyproject.toml) once it is released.
+        pip install "asimov @ git+https://github.com/etive-io/asimov@refs/pull/175/head"
+
+    - name: Check example blueprints against the vocabulary
+      run: |
+        asimov vocabulary check --pipeline myplugin examples/*.yaml
+
+    - name: Check the plugin vocabulary doesn't clash with core
+      run: |
+        asimov vocabulary lint

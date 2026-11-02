@@ -1,0 +1,6 @@
+include README.md
+include LICENSE
+include pyproject.toml
+recursive-include asimov_myplugin *.py *.ini *.yaml
+recursive-exclude tests *
+recursive-exclude .github *

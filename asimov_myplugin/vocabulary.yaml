@@ -1,0 +1,18 @@
+# Ledger terms which only my-executable understands.
+#
+# Registered with asimov through the `asimov.vocabulary` entry point in
+# pyproject.toml, so `asimov vocabulary check --pipeline myplugin` knows
+# them. Only add a term here if no other pipeline would need the same number
+# for the same analysis; anything else (sample rate, frequencies, PSDs,
+# priors, resource requests...) must use its standard asimov name. Check with
+# `asimov vocabulary lint` after adding a term.
+terms:
+  myplugin:
+    description: Settings which only my-executable understands.
+    children:
+      warmup steps:
+        type: integer
+        description: >-
+          The number of warm-up (tuning) iterations my-executable's own
+          sampler discards before it starts recording samples. Defaults to
+          500.

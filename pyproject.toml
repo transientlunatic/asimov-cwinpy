@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asimov-myplugin"
+version = "0.1.0"
+description = "A template plugin for asimov with pipeline, applicator, and monitoring support"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+keywords = ["asimov", "gravitational waves", "parameter estimation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "asimov>=0.7.0",
+    # Add your pipeline-specific dependencies here
+    # e.g., "bilby>=2.0.0", "numpy>=1.20.0", etc.
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "flake8>=6.0",
+    "mypy>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/asimov-myplugin"
+Documentation = "https://github.com/yourusername/asimov-myplugin/blob/main/README.md"
+Repository = "https://github.com/yourusername/asimov-myplugin"
+Issues = "https://github.com/yourusername/asimov-myplugin/issues"
+
+# Entry points for asimov plugin discovery
+[project.entry-points."asimov.pipelines"]
+# Register your pipeline(s) here
+# The key is the name used in asimov ledger files (e.g., pipeline: myplugin)
+# The value points to your Pipeline class
+myplugin = "asimov_myplugin.pipeline:MyPlugin"
+
+[project.entry-points."asimov.vocabulary"]
+# Register the ledger terms under your pipeline's own namespace (`myplugin:`)
+# so `asimov vocabulary check --pipeline myplugin` can validate blueprints.
+# The key must be the pipeline name, matching the asimov.pipelines entry.
+myplugin = "asimov_myplugin:vocabulary"
+
+[project.entry-points."asimov.hooks.applicator"]
+# Register applicator hooks here (used with: asimov apply -p my-applicator -e event)
+# These hooks can provide data to asimov projects
+my-applicator = "asimov_myplugin.hooks:MyApplicatorHook"
+
+[project.entry-points."asimov.hooks.postmonitor"]
+# Register post-monitor hooks here (called after each monitoring cycle)
+# Configure in ledger under: hooks/postmonitor
+my-monitor = "asimov_myplugin.hooks:MyPostMonitorHook"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["asimov_myplugin*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+asimov_myplugin = ["configs/*.ini", "vocabulary.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "--cov=asimov_myplugin --cov-report=html --cov-report=term"
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+include = '\.pyi?$'
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
