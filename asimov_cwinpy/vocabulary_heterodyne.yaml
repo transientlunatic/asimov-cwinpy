@@ -1,0 +1,27 @@
+# The ledger terms which only cwinpy-heterodyne understands.
+#
+# Registered through the `asimov.vocabulary` entry point, so that
+# `asimov vocabulary check` knows them. The terms that more than one cwinpy
+# pipeline reads (`ephemeris`, `frequency factors`) are on the analysis type
+# (asimov_cwinpy/types.py), and the standard ones (`interferometers`,
+# `scheduler: request ...`) keep their standard names.
+terms:
+  cwinpy-heterodyne:
+    description: Settings which only cwinpy-heterodyne understands.
+    children:
+      data start:
+        type: integer
+        units: s (GPS)
+        description: >-
+          The GPS time at which the data of the shard starts. All detectors of
+          the shard share it.
+      data end:
+        type: integer
+        units: s (GPS)
+        description: The GPS time at which the data of the shard ends.
+      joblength:
+        type: integer
+        units: s
+        description: >-
+          The length of data that each HTCondor job of the shard reads and
+          heterodynes (for all the pulsars at once). cwinpy's default is one day.

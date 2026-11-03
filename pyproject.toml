@@ -3,32 +3,36 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "asimov-myplugin"
+name = "asimov-cwinpy"
 version = "0.1.0"
-description = "A template plugin for asimov with pipeline, applicator, and monitoring support"
+description = "An asimov plugin to run the cwinpy known-pulsar analysis: heterodyning, merging and parameter estimation"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "The asimov-cwinpy developers"}
 ]
-keywords = ["asimov", "gravitational waves", "parameter estimation"]
+keywords = ["asimov", "gravitational waves", "continuous waves", "pulsars", "cwinpy"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Astronomy",
     "Topic :: Scientific/Engineering :: Physics",
 ]
 
 dependencies = [
-    "asimov>=0.7.0",
-    # Add your pipeline-specific dependencies here
-    # e.g., "bilby>=2.0.0", "numpy>=1.20.0", etc.
+    # Needs a version of asimov with the retry policy (etive-io/asimov#299),
+    # analysis types (#302) and the rescue fixes (#298), which is the release
+    # after 0.8. CI installs asimov from its main branch until then.
+    "asimov>=0.8.0",
+    # cwinpy itself is not a dependency: it is expected to be in the environment
+    # that jobs run in, as for the other asimov plugins.
 ]
 
 [project.optional-dependencies]
@@ -41,46 +45,43 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/asimov-myplugin"
-Documentation = "https://github.com/yourusername/asimov-myplugin/blob/main/README.md"
-Repository = "https://github.com/yourusername/asimov-myplugin"
-Issues = "https://github.com/yourusername/asimov-myplugin/issues"
+Homepage = "https://github.com/transientlunatic/asimov-cwinpy"
+Documentation = "https://github.com/transientlunatic/asimov-cwinpy/blob/main/README.md"
+Repository = "https://github.com/transientlunatic/asimov-cwinpy"
+Issues = "https://github.com/transientlunatic/asimov-cwinpy/issues"
 
 # Entry points for asimov plugin discovery
 [project.entry-points."asimov.pipelines"]
-# Register your pipeline(s) here
-# The key is the name used in asimov ledger files (e.g., pipeline: myplugin)
-# The value points to your Pipeline class
-myplugin = "asimov_myplugin.pipeline:MyPlugin"
+# The key is the name used in asimov ledger files (e.g., pipeline: cwinpy-pe).
+cwinpy-heterodyne = "asimov_cwinpy.heterodyne:HeterodynePipeline"
+cwinpy-merge = "asimov_cwinpy.merge:MergePipeline"
+cwinpy-pe = "asimov_cwinpy.pe:PEPipeline"
+
+[project.entry-points."asimov.analysis_types"]
+# Generic analyses with no gravitational-wave transient metadata. Also brings the
+# vocabulary terms that the pipelines share.
+cwinpy = "asimov_cwinpy.types:CwinpyAnalysis"
+
+[project.entry-points."asimov.strategies"]
+cwinpy-run = "asimov_cwinpy.strategy:RunStrategy"
 
 [project.entry-points."asimov.vocabulary"]
-# Register the ledger terms under your pipeline's own namespace (`myplugin:`)
-# so `asimov vocabulary check --pipeline myplugin` can validate blueprints.
-# The key must be the pipeline name, matching the asimov.pipelines entry.
-myplugin = "asimov_myplugin:vocabulary"
-
-[project.entry-points."asimov.hooks.applicator"]
-# Register applicator hooks here (used with: asimov apply -p my-applicator -e event)
-# These hooks can provide data to asimov projects
-my-applicator = "asimov_myplugin.hooks:MyApplicatorHook"
-
-[project.entry-points."asimov.hooks.postmonitor"]
-# Register post-monitor hooks here (called after each monitoring cycle)
-# Configure in ledger under: hooks/postmonitor
-my-monitor = "asimov_myplugin.hooks:MyPostMonitorHook"
+# The key must be the pipeline name. Terms that only cwinpy-heterodyne reads;
+# terms shared by the pipelines are on the analysis type.
+cwinpy-heterodyne = "asimov_cwinpy:vocabulary_heterodyne"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["asimov_myplugin*"]
+include = ["asimov_cwinpy*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-asimov_myplugin = ["configs/*.ini", "vocabulary.yaml"]
+asimov_cwinpy = ["*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "--cov=asimov_myplugin --cov-report=html --cov-report=term"
+addopts = "--cov=asimov_cwinpy --cov-report=html --cov-report=term"
 
 [tool.black]
 line-length = 100

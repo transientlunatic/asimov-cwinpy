@@ -1,0 +1,16 @@
+# A pulsar, and the estimation of its parameters from the merged heterodyned
+# data of a run. Illustrative: the pipelines are skeletons.
+kind: event
+name: J0534+2200
+ephemeris: /path/to/J0534+2200.par
+frequency factors: [1, 2]
+---
+kind: analysis
+name: pe
+pipeline: cwinpy-pe
+event: J0534+2200
+needs:
+  # `subject/name`: an analysis of the run subject
+  - O4a-heterodyne/merge
+scheduler:
+  request memory: 8192MB
