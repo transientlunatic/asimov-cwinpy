@@ -68,6 +68,29 @@ def asimov(*arguments, cwd):
     )
 
 
+def tail(path, lines=40):
+    """The end of a file, for saying what went wrong."""
+    try:
+        return "".join(Path(path).read_text(errors="replace").splitlines(keepends=True)[-lines:])
+    except OSError as error:
+        return f"(cannot read {path}: {error})"
+
+
+def explain(analysis, monitored):
+    """What a failed run left behind, since a CI log has nothing else to go on."""
+    rundir = Path(analysis.rundir)
+    return (
+        f"The analysis is {analysis.status}, not finished.\n"
+        f"--- the last `asimov monitor`:\n{monitored.stdout if monitored else None}"
+        f"{monitored.stderr[-1500:] if monitored else ''}\n"
+        f"--- scheduler and attempts in the ledger: {analysis.meta.get('scheduler')} "
+        f"{analysis.meta.get('attempts')}\n"
+        f"--- files in the run directory: {sorted(p.name for p in rundir.rglob('*'))}\n"
+        f"--- {analysis.name}.err:\n{tail(rundir / (analysis.name + '.err'))}\n"
+        f"--- {analysis.name}.out:\n{tail(rundir / (analysis.name + '.out'), 15)}"
+    )
+
+
 def test_a_pulsar_is_analysed_from_blueprint_to_posterior(project, tmp_path):
     # The project runs jobs itself, with the cwinpy_pe of this environment.
     conf = Path(".asimov/asimov.conf")
@@ -87,15 +110,17 @@ def test_a_pulsar_is_analysed_from_blueprint_to_posterior(project, tmp_path):
     submitted = asimov("manage", "submit", cwd=tmp_path)
     assert submitted.returncode == 0, submitted.stdout + submitted.stderr
 
-    deadline = time.time() + 240
+    deadline = time.time() + 150
+    monitored = None
     while time.time() < deadline:
         time.sleep(5)
-        asimov("monitor", cwd=tmp_path)
+        monitored = asimov("monitor", cwd=tmp_path)
         analysis = project.analysis("J0534+2200", "pe")
         if analysis.status == "finished":
             break
     analysis = project.analysis("J0534+2200", "pe")
-    assert analysis.status == "finished", analysis.status
+    if analysis.status != "finished":
+        pytest.fail(explain(analysis, monitored))
 
     result = analysis.pipeline.collect_assets()["samples"]
     assert os.path.exists(result)
