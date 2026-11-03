@@ -123,8 +123,9 @@ Since then asimov main has gained the retry policy (#299), output retention
 They are newer than the 0.8.1 release, so the plugin needs asimov from `main`
 until the next release; CI installs it from there.
 
-One gap remains: the `retry` and `on failure` keys are not in the ledger
-vocabulary, so `asimov vocabulary check` rejects them.
+The retry policy's keys were not in the ledger vocabulary at first, so
+`asimov vocabulary check` rejected them; that is fixed
+([#311](https://github.com/etive-io/asimov/issues/311), #312).
 
 ## Work, in order
 

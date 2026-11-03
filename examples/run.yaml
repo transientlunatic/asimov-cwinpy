@@ -22,14 +22,10 @@ cwinpy-heterodyne:
 scheduler:
   request memory: 16384MB
 # A frame file that cannot be read fails a job. Asimov's own retry policy tries
-# the shard again, after an hour, up to ten times:
-#
-#   retry:
-#     attempts: 10
-#     delay: 3600
-#
-# (Commented out because `retry` is not in the ledger vocabulary yet, so
-# `asimov vocabulary check` rejects it.)
+# the shard again, after an hour, up to ten times.
+retry:
+  attempts: 10
+  delay: 3600
 ---
 kind: analysis
 name: merge
