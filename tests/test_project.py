@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from asimov.analysis import GravitationalWaveTransient
+from asimov import retry
 from asimov.analysis_types import reset_analysis_types
 from asimov.cli.application import apply_page
 from asimov.cli.project import make_project
@@ -73,3 +74,12 @@ class ExamplesTests(unittest.TestCase):
         shard = self.analyses("O4a-heterodyne")["shard-0001"]
         self.assertEqual(shard.meta["cwinpy-heterodyne"]["joblength"], 86400)
         self.assertEqual(shard.meta["frequency factors"], [1, 2])
+
+    def test_asimovs_retry_policy_reads_the_retry_block_of_the_shard(self):
+        policy = retry.policy(self.analyses("O4a-heterodyne")["shard-0001"])
+        self.assertTrue(policy["configured"])
+        self.assertEqual(policy["attempts"], 10)
+        self.assertEqual(policy["delay"], 3600)
+
+    def test_a_pulsar_analysis_has_no_retry_policy_unless_it_is_given_one(self):
+        self.assertFalse(retry.policy(self.analyses("J0534+2200")["pe"])["configured"])
