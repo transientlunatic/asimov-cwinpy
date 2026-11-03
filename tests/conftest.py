@@ -54,3 +54,33 @@ SIMULATED = (
     "cwinpy-pe:\n  fake asd: {H1: 1.0e-24, L1: 1.0e-24}\n"
     "  fake start: 1000000000\n  fake end: 1000086400\n  fake dt: 60\n  fake seed: 1\n"
 )
+
+
+def shard_blueprint(
+    cache=True,
+    extra_analysis="",
+    ephemerides="[/data/J0534+2200.par]",
+    extra_event="",
+    name="O4a-heterodyne",
+):
+    """A shard of a run, as a blueprint."""
+    if cache:
+        data = (
+            "data:\n  channels: {H1: 'H1:FAKE-STRAIN', L1: 'L1:FAKE-STRAIN'}\n"
+            "  cache files: {H1: /frames/H1, L1: /frames/L1}\n"
+        )
+        segments = "  segment lists: {H1: /segs/H1.txt, L1: /segs/L1.txt}\n"
+    else:
+        data = (
+            "data:\n  channels: {H1: 'H1:GDS-CALIB_STRAIN', L1: 'L1:GDS-CALIB_STRAIN'}\n"
+            "  frame types: {H1: H1_HOFT_C00, L1: L1_HOFT_C00}\n"
+            "  segments: {H1: 'H1:DMT-ANALYSIS_READY:1', L1: 'L1:DMT-ANALYSIS_READY:1'}\n"
+            "  datafind url: datafind.example.org:80\n  datafind url type: osdf\n"
+        )
+        segments = "  segment server: https://segments.example.org\n"
+    return (
+        f"kind: event\nname: {name}\ninterferometers: [H1, L1]\n{extra_event}---\n"
+        f"kind: analysis\nname: shard-0001\npipeline: cwinpy-heterodyne\nevent: {name}\n"
+        f"{data}cwinpy-heterodyne:\n  data start: 1000000000\n  data end: 1000002048\n"
+        f"  ephemerides: {ephemerides}\n{segments}{extra_analysis}"
+    )

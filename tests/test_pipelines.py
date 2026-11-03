@@ -43,7 +43,7 @@ def test_a_pipeline_refuses_an_analysis_of_another(cls):
 
 
 #: The pipelines that are not implemented yet.
-SKELETONS = [HeterodynePipeline, MergePipeline]
+SKELETONS = [MergePipeline]
 
 
 @pytest.mark.parametrize("cls", SKELETONS)

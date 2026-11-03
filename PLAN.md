@@ -136,10 +136,13 @@ The retry policy's keys were not in the ledger vocabulary at first, so
 3. ~~PE pipeline~~ (done): `cwinpy-pe` builds, submits and recognises completion, and has
    been run through asimov with the real `cwinpy_pe` on simulated noise (`tests/test_pe_cwinpy.py`,
    and a CI job). Not done: the `bayes factors` asset from the result file.
-4. Heterodyne shard pipeline: canonical config, build and submit (resumable),
-   expected-file list, completion check, assets.
-5. Failure handling as above: classification, progress reporting, coverage
-   check, output retention.
+4. ~~Heterodyne shard pipeline~~ (done, except as listed under open questions): `cwinpy-heterodyne`
+   turns the ledger into one canonical configuration, has cwinpy's own runner build the DAG, records
+   the files to expect, submits it (and submits it again to resume it), recognises completion, and
+   classifies failures. Tested with the real runner and the real `cwinpy_heterodyne` jobs on fake
+   frames; no HTCondor.
+5. Failure handling, the rest: progress reporting from DAGMan's logs, the coverage threshold,
+   and output retention. (Classification of failures is done, in step 4.)
 6. Merge pipeline and assets.
 7. `cwinpy-run` strategy.
 8. End-to-end: a mock run with fake `cwinpy` executables and injected frame
@@ -163,6 +166,40 @@ The retry policy's keys were not in the ledger vocabulary at first, so
   ConfigArgParse below 1.7.6. (A first guess of "1.9" was wrong: CI installed 1.7.7.)
 - **cwinpy builds in a clean environment** given the GSL development files, so the real
   `cwinpy_heterodyne` can be exercised in tests for step 4 too.
+
+## What step 4 taught us
+
+Found by running cwinpy, not from its documentation:
+
+- **cwinpy writes an empty file for each output when it builds the DAG.** A file that exists is
+  not a result. Completion is "DAGMan said the DAG succeeded and every expected output has data".
+- **With cwinpy's default, an unreadable frame does not fail a job.** The job exits 0 and writes
+  nothing (`strictdatarequirement` false). That is how the first O4 run lost data without anyone
+  knowing. The plugin defaults to true, and reports a DAG that succeeded with empty outputs.
+- **What a job writes when it cannot read a frame** (made by damaging one): `OSError: Failed to
+  read frame data from cache`, and `XLAL Error - XLALFrFileOpenURL ... Could not open TOC for
+  frame file` / `I/O error`. These are the signatures `FRAME_READ_ERRORS` looks for.
+- **Every node already has `RETRY 2`**, which retries at once. That is the retry that fails for
+  the same cause as the first try. The retry that waits is asimov's.
+- **cwinpy submits its own DAGs with `force`**, and asimov's scheduler could not. Without it,
+  `condor_submit_dag` refuses to run a DAG again while the files of its last run exist, so a retry
+  could not work. [etive-io/asimov#314](https://github.com/etive-io/asimov/issues/314), fixed in
+  [#315](https://github.com/etive-io/asimov/pull/315).
+- **The DAG can be built offline** from frame caches and segment lists, which is what makes the
+  tests possible. A frame cache can be a directory of frames.
+- **Checking a shard costs about one `stat` per expected file**, once DAGMan has finished and not
+  before: a shard of a few dozen jobs for 200 pulsars has a few thousand expected files.
+
+**Not verified, because there is no HTCondor here, and for Matt to check on a pool:**
+
+1. That DAGMan's log ends with `EXITING WITH STATUS n`, which is how the end of the DAG is read.
+   (This is from memory of DAGMan; the tests write that line themselves.)
+2. That submitting the same DAG file again with `force` resumes from the rescue file, and that
+   `condor_submit_dag` then removes the files it complains about and nothing else.
+3. That a DAGMan job whose nodes failed shows as Completed to asimov (asimov #296 handles it).
+4. That a real unreadable disk gives the signatures above, and not only a truncated file does.
+5. That the per-node `.err` files are where `failed_nodes` looks (`<rundir>/log/`), after a
+   retry has overwritten them.
 
 ## Open questions
 

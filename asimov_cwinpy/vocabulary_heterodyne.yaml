@@ -3,8 +3,10 @@
 # Registered through the `asimov.vocabulary` entry point, so that
 # `asimov vocabulary check` knows them. The terms that more than one cwinpy
 # pipeline reads (`ephemeris`, `frequency factors`) are on the analysis type
-# (asimov_cwinpy/types.py), and the standard ones (`interferometers`,
-# `scheduler: request ...`) keep their standard names.
+# (asimov_cwinpy/types.py). The standard ones keep their standard names:
+# `interferometers`, `data: channels`, `data: frame types`, `data: segments`,
+# `data: cache files`, `data: datafind url`, `data: datafind url type`, and
+# `scheduler: request ...` and `accounting group`.
 terms:
   cwinpy-heterodyne:
     description: Settings which only cwinpy-heterodyne understands.
@@ -19,9 +21,33 @@ terms:
         type: integer
         units: s (GPS)
         description: The GPS time at which the data of the shard ends.
+      ephemerides:
+        type: list
+        description: >-
+          The Tempo(2)-style pulsar parameter (.par) files of the pulsars to
+          heterodyne. Every job of the shard reads its data once and writes the
+          heterodyned data of all of them.
       joblength:
         type: integer
         units: s
         description: >-
           The length of data that each HTCondor job of the shard reads and
           heterodynes (for all the pulsars at once). cwinpy's default is one day.
+      strict data requirement:
+        type: boolean
+        description: >-
+          Whether a job fails if it cannot read a frame file. If false, cwinpy
+          ignores data it cannot read and the job can succeed with no output, so
+          data is lost without a failure. Defaults to true here (cwinpy's own
+          default is false).
+      segment lists:
+        type: string
+        per ifo: true
+        description: >-
+          A file of the segments of science data for each detector, one
+          ``start end`` pair per line, instead of looking them up from the flag in
+          ``data: segments``. For data that is not on a datafind server.
+      segment server:
+        type: string
+        description: >-
+          The segment database to look up the flag in ``data: segments`` in.

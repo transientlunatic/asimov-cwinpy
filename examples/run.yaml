@@ -1,11 +1,13 @@
 # The heterodyning of an observing run: a "run" subject holding the shards of the
-# run and the merge of their output. Illustrative: the pipelines are skeletons.
+# run and the merge of their output. The shard here is the kind that reads O4 data
+# from a datafind server; see tests/test_heterodyne_cwinpy.py for one that reads
+# frames from a cache.
 #
 # Check with:  asimov vocabulary check examples/*.yaml
 #
 # Settings that only cwinpy-heterodyne understands are under `cwinpy-heterodyne:`;
-# the rest keep their standard asimov names. The `cwinpy-run` strategy will
-# write the shards and the merge from a description of the run.
+# the rest keep their standard asimov names. The `cwinpy-run` strategy will write
+# the shards and the merge from a description of the run.
 kind: event
 name: O4a-heterodyne
 interferometers: [H1, L1]
@@ -15,14 +17,28 @@ kind: analysis
 name: shard-0001
 pipeline: cwinpy-heterodyne
 event: O4a-heterodyne
+data:
+  channels: {H1: "H1:GDS-CALIB_STRAIN", L1: "L1:GDS-CALIB_STRAIN"}
+  frame types: {H1: H1_HOFT_C00, L1: L1_HOFT_C00}
+  segments: {H1: "H1:DMT-ANALYSIS_READY:1", L1: "L1:DMT-ANALYSIS_READY:1"}
+  datafind url: datafind.igwn.org
+  datafind url type: osdf
 cwinpy-heterodyne:
   data start: 1368975618
   data end: 1369580418
+  # Every job reads a day of data once and heterodynes it for all the pulsars.
   joblength: 86400
+  ephemerides:
+    - /path/to/J0534+2200.par
+    - /path/to/J0537-6910.par
+  # A job which cannot read a frame file fails (the default), so that it can be run again.
+  strict data requirement: true
 scheduler:
   request memory: 16384MB
-# A frame file that cannot be read fails a job. Asimov's own retry policy tries
-# the shard again, after an hour, up to ten times.
+  request disk: 40GB
+  accounting group: ligo.prod.o4.cw.targeted.bayesian
+# A frame file that cannot be read fails a job. Asimov's own retry policy submits the
+# shard again, after an hour, up to ten times, and HTCondor runs only the jobs that failed.
 retry:
   attempts: 10
   delay: 3600
