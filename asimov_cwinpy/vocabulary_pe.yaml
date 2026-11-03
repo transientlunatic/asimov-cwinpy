@@ -1,0 +1,34 @@
+# The ledger terms which only cwinpy-pe understands.
+#
+# Registered through the `asimov.vocabulary` entry point. The terms that more than
+# one cwinpy pipeline reads (`ephemeris`, `frequency factors`) are on the analysis
+# type, and the standard ones (`interferometers`, `priors`, `sampler`,
+# `scheduler: request ...` and `scheduler: periodic restart time`) keep their
+# standard names.
+terms:
+  cwinpy-pe:
+    description: Settings which only cwinpy-pe understands.
+    children:
+      fake asd:
+        type: float
+        per ifo: true
+        units: Hz^-1/2
+        description: >-
+          Analyse simulated Gaussian noise, instead of heterodyned data from an
+          upstream analysis, with this amplitude spectral density for each
+          detector. For testing a configuration.
+      fake start:
+        type: integer
+        units: s (GPS)
+        description: The GPS time at which the simulated data starts.
+      fake end:
+        type: integer
+        units: s (GPS)
+        description: The GPS time at which the simulated data ends.
+      fake dt:
+        type: integer
+        units: s
+        description: The time step of the simulated data. cwinpy's default is 60.
+      fake seed:
+        type: integer
+        description: The random seed of the simulated noise.

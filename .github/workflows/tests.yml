@@ -86,3 +86,34 @@ jobs:
     - name: Check the plugin vocabulary doesn't clash with core
       run: |
         asimov vocabulary lint
+
+  e2e:
+    # Runs the real cwinpy_pe, through asimov's command line, on simulated noise. It is
+    # its own job because installing cwinpy (lalsuite, and lintegrate, which is built
+    # against GSL) takes a few minutes.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install GSL, which lintegrate (a dependency of cwinpy) is built against
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgsl-dev
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install "$ASIMOV"
+        # cwinpy 1.5.0 cannot read its configuration files with ConfigArgParse 1.7.6
+        # or later (1.7.5 is the last that works)
+        pip install cwinpy "ConfigArgParse<1.7.6"
+        pip install -e ".[dev]"
+
+    - name: Run cwinpy_pe through asimov
+      run: |
+        pytest tests/test_pe_cwinpy.py --no-cov -v

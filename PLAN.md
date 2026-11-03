@@ -133,7 +133,9 @@ The retry policy's keys were not in the ledger vocabulary at first, so
 2. ~~Scaffold~~ (done): the package is renamed, the three pipelines, the
    `cwinpy` analysis type, the `cwinpy-run` strategy and the vocabulary are
    registered as skeletons, with tests, examples and CI.
-3. PE pipeline, tested with cwinpy's fake-ASD data (no cluster needed).
+3. ~~PE pipeline~~ (done): `cwinpy-pe` builds, submits and recognises completion, and has
+   been run through asimov with the real `cwinpy_pe` on simulated noise (`tests/test_pe_cwinpy.py`,
+   and a CI job). Not done: the `bayes factors` asset from the result file.
 4. Heterodyne shard pipeline: canonical config, build and submit (resumable),
    expected-file list, completion check, assets.
 5. Failure handling as above: classification, progress reporting, coverage
@@ -144,6 +146,23 @@ The retry policy's keys were not in the ledger vocabulary at first, so
    failures to prove the retry loop; O1 hardware injections on LDG; a small O4
    slice.
 9. Documentation and release.
+
+## What step 3 taught us
+
+- **A job that has gone is not necessarily dead.** Asimov's list of jobs is cached for 15
+  minutes, and the local scheduler cannot be asked from another process, so a job that was
+  just submitted can look gone. A `resurrect()` that raises on that marks a healthy job
+  `stuck`. The end-to-end test found this. `resurrect()` raises only on evidence of failure
+  (the job's log, or an exception in its error output), as the command pipeline's does, and
+  otherwise leaves the job alone. The heterodyne pipeline must do the same.
+- **The HTCondor log is a sequence of events.** After a restart it still holds the end of the
+  first run until the job is submitted again, so the last event is what counts.
+- **cwinpy 1.5.0 and ConfigArgParse 1.7.6 or later are incompatible.** The configuration file
+  cannot be read at all (`AttributeError` in `CWInPyConfigFileParser.parse`). 1.7.5 is the last
+  version that works, found by trying each release. Worth telling the cwinpy developers; CI pins
+  ConfigArgParse below 1.7.6. (A first guess of "1.9" was wrong: CI installed 1.7.7.)
+- **cwinpy builds in a clean environment** given the GSL development files, so the real
+  `cwinpy_heterodyne` can be exercised in tests for step 4 too.
 
 ## Open questions
 
