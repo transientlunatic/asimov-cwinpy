@@ -66,9 +66,10 @@ cwinpy = "asimov_cwinpy.types:CwinpyAnalysis"
 cwinpy-run = "asimov_cwinpy.strategy:RunStrategy"
 
 [project.entry-points."asimov.vocabulary"]
-# The key must be the pipeline name. Terms that only cwinpy-heterodyne reads;
+# The key must be the pipeline name. Terms that only that pipeline reads;
 # terms shared by the pipelines are on the analysis type.
 cwinpy-heterodyne = "asimov_cwinpy:vocabulary_heterodyne"
+cwinpy-pe = "asimov_cwinpy:vocabulary_pe"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -76,7 +77,7 @@ include = ["asimov_cwinpy*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-asimov_cwinpy = ["*.yaml"]
+asimov_cwinpy = ["*.yaml", "configs/*.ini"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

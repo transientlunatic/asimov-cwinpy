@@ -10,7 +10,7 @@ import importlib.resources
 
 __version__ = "0.1.0"
 
-__all__ = ["vocabulary_heterodyne"]
+__all__ = ["vocabulary_heterodyne", "vocabulary_pe"]
 
 
 def vocabulary_heterodyne():
@@ -26,3 +26,15 @@ def vocabulary_heterodyne():
         The bundled ``vocabulary_heterodyne.yaml``.
     """
     return importlib.resources.files(__name__).joinpath("vocabulary_heterodyne.yaml")
+
+
+def vocabulary_pe():
+    """
+    Return the ledger vocabulary of the ``cwinpy-pe`` pipeline.
+
+    Returns
+    -------
+    importlib.abc.Traversable
+        The bundled ``vocabulary_pe.yaml``.
+    """
+    return importlib.resources.files(__name__).joinpath("vocabulary_pe.yaml")

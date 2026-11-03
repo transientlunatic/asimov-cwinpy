@@ -5,10 +5,10 @@ An [asimov](https://github.com/etive-io/asimov) plugin to run the
 data of an observing run for many pulsars, merging the result, and estimating the
 parameters of the signal of each pulsar.
 
-> **Status: pre-alpha.** The plugin is a skeleton. Asimov finds the pipelines, the
-> analysis type and the strategy, and the example blueprints can be applied and
-> checked, but nothing can be built or submitted yet. [`PLAN.md`](PLAN.md) says what
-> is done and what is next.
+> **Status: pre-alpha.** `cwinpy-pe` works: it has been run through asimov on simulated
+> noise, with the real `cwinpy_pe`. `cwinpy-heterodyne`, `cwinpy-merge` and the `cwinpy-run`
+> strategy are skeletons that asimov finds but that cannot build or submit anything yet.
+> [`PLAN.md`](PLAN.md) says what is done and what is next.
 
 ## What it provides
 
@@ -55,8 +55,37 @@ Standard asimov keys keep their names (`interferometers`, `needs`,
 * `ephemeris`: the path to the pulsar's Tempo(2)-style `.par` file.
 * `frequency factors`: the factors of the rotation frequency to heterodyne at, e.g. `[1, 2]`.
 
-Only `cwinpy-heterodyne` has settings of its own so far, under `cwinpy-heterodyne:`:
-`data start` and `data end` (GPS times) and `joblength` (seconds of data per job).
+`cwinpy-heterodyne` has settings of its own, under `cwinpy-heterodyne:`: `data start` and
+`data end` (GPS times) and `joblength` (seconds of data per job).
+
+### `cwinpy-pe`
+
+One analysis is one pulsar (the name of its subject), run as a single `cwinpy_pe` job.
+
+| Ledger key | `cwinpy_pe` option |
+|---|---|
+| `ephemeris` | `par-file` |
+| `interferometers` | `detector` |
+| `frequency factors` (1 and/or 2; default 2) | `data-file-1f`, `data-file-2f`, from the `heterodyned data` asset |
+| `priors` | `prior`: a bilby prior file that the pipeline writes. Names of parameters are those of `cwinpy_pe` and are not changed. |
+| `sampler: sampler`, `sampler: sampler kwargs` | `sampler`, `sampler-kwargs` |
+| `scheduler: periodic restart time` | `periodic-restart-time` |
+| `scheduler: request cpus`, `request memory`, `request disk`, `accounting group` | the resources of the job |
+
+The data comes from the `heterodyned data` asset of the analysis it `needs`, a mapping
+`{pulsar: {detector: {factor: path}}}`. To try a configuration without any, analyse simulated
+noise with `cwinpy-pe: fake asd: {H1: 1.0e-24, L1: 1.0e-24}` (and `fake start`, `fake end`,
+`fake dt`, `fake seed`); see [`examples/pulsar-simulated.yaml`](examples/pulsar-simulated.yaml),
+which runs in seconds.
+
+The result is the `samples` asset, `<outdir>/<name>_result.hdf5`. The analysis is complete
+when that file exists, not when its checkpoint files do.
+
+If `cwinpy_pe` stops itself to be restarted (exit code 77, after `periodic restart time`),
+the job is submitted again and resumes from its checkpoint. That is read from the HTCondor log,
+so it works on HTCondor only. A job that has gone from the scheduler is treated as failed only
+if there is evidence of it (its log, or an exception in its error output); otherwise it is left
+alone, because the list of jobs may be out of date.
 
 ## Requirements
 
@@ -68,6 +97,15 @@ not dependencies of the plugin. The DAG pipeline supports HTCondor only.
 pip install "asimov @ git+https://github.com/etive-io/asimov@main"
 pip install -e ".[dev]"
 pytest
+```
+
+`tests/test_pe_cwinpy.py` runs the real `cwinpy_pe` and is skipped unless cwinpy is installed.
+cwinpy needs the GSL development files to build (`libgsl-dev`), and version 1.5.0 cannot read
+its configuration files with ConfigArgParse 1.9, so:
+
+```bash
+pip install cwinpy "ConfigArgParse<1.8"
+pytest tests/test_pe_cwinpy.py
 ```
 
 > **Using Claude Code?** The repository carries an

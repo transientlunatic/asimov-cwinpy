@@ -1,0 +1,25 @@
+# The same pulsar, analysed in simulated noise rather than heterodyned data, which
+# needs no upstream analysis. For trying a configuration out: it takes seconds.
+kind: event
+name: J0534+2200-simulated
+ephemeris: /path/to/J0534+2200.par
+interferometers: [H1, L1]
+priors:
+  h0: {type: uniform, minimum: 0.0, maximum: 1.0e-22}
+  phi0: {type: uniform, minimum: 0.0, maximum: 3.141592653589793}
+  iota: {type: sine, minimum: 0.0, maximum: 3.141592653589793}
+  psi: {type: uniform, minimum: 0.0, maximum: 1.5707963267948966}
+---
+kind: analysis
+name: pe
+pipeline: cwinpy-pe
+event: J0534+2200-simulated
+sampler:
+  sampler: dynesty
+  sampler kwargs: {nlive: 100, dlogz: 1.0}
+cwinpy-pe:
+  fake asd: {H1: 1.0e-24, L1: 1.0e-24}
+  fake start: 1000000000
+  fake end: 1000086400
+  fake dt: 60
+  fake seed: 1

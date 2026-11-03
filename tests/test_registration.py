@@ -75,3 +75,11 @@ def test_the_heterodyne_terms_belong_to_the_heterodyne_pipeline():
 
 def test_the_vocabulary_does_not_clash_with_the_standard_one():
     assert get_vocabulary(refresh=True).conflicts == []
+
+
+def test_the_pe_terms_belong_to_the_pe_pipeline():
+    vocabulary = get_vocabulary(refresh=True)
+    for path in ("fake asd", "fake start", "fake end", "fake dt", "fake seed"):
+        term = vocabulary.lookup(f"cwinpy-pe.{path}")
+        assert term is not None, path
+        assert term.owner == "cwinpy-pe", path

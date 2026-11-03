@@ -49,10 +49,10 @@ class ExamplesTests(unittest.TestCase):
         meta = self.analyses("J0534+2200")["pe"].meta
         for key in ("waveform", "event time", "data", "quality"):
             self.assertNotIn(key, meta)
-        # (asimov's generic analysis still starts with empty `likelihood` and `sampler`
-        # blocks; what a gravitational-wave analysis adds to them is not there.)
+        # (asimov's generic analysis still starts with an empty `likelihood` block; what a
+        # gravitational-wave analysis adds to it is not there. The sampler is the example's.)
         self.assertEqual(meta.get("likelihood"), {})
-        self.assertEqual(meta.get("sampler"), {})
+        self.assertEqual(meta.get("sampler"), {"sampler": "dynesty"})
 
     def test_each_analysis_has_the_pipeline_which_it_names(self):
         shard = self.analyses("O4a-heterodyne")["shard-0001"]

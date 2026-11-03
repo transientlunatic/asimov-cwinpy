@@ -1,9 +1,18 @@
 # A pulsar, and the estimation of its parameters from the merged heterodyned
-# data of a run. Illustrative: the pipelines are skeletons.
+# data of a run (see run.yaml).
+#
+# Check with:  asimov vocabulary check examples/*.yaml
 kind: event
 name: J0534+2200
 ephemeris: /path/to/J0534+2200.par
+interferometers: [H1, L1]
 frequency factors: [1, 2]
+# The names of the parameters are those of cwinpy_pe, passed through unchanged.
+priors:
+  h0: {type: uniform, minimum: 0.0, maximum: 1.0e-22}
+  phi0: {type: uniform, minimum: 0.0, maximum: 3.141592653589793}
+  iota: {type: sine, minimum: 0.0, maximum: 3.141592653589793}
+  psi: {type: uniform, minimum: 0.0, maximum: 1.5707963267948966}
 ---
 kind: analysis
 name: pe
@@ -12,5 +21,7 @@ event: J0534+2200
 needs:
   # `subject/name`: an analysis of the run subject
   - O4a-heterodyne/merge
+sampler:
+  sampler: dynesty
 scheduler:
   request memory: 8192MB

@@ -42,7 +42,11 @@ def test_a_pipeline_refuses_an_analysis_of_another(cls):
         cls(production(other.pipeline_name))
 
 
-@pytest.mark.parametrize("cls", PIPELINES)
+#: The pipelines that are not implemented yet.
+SKELETONS = [HeterodynePipeline, MergePipeline]
+
+
+@pytest.mark.parametrize("cls", SKELETONS)
 def test_building_and_submitting_say_which_step_of_the_plan_implements_them(cls):
     pipeline = cls(production(cls.pipeline_name))
     for method in (pipeline.build_dag, pipeline.submit_dag):
