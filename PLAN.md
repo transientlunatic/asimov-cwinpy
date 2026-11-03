@@ -157,8 +157,10 @@ The retry policy's keys were not in the ledger vocabulary at first, so
   otherwise leaves the job alone. The heterodyne pipeline must do the same.
 - **The HTCondor log is a sequence of events.** After a restart it still holds the end of the
   first run until the job is submitted again, so the last event is what counts.
-- **cwinpy 1.5.0 and ConfigArgParse 1.9 are incompatible.** The configuration file cannot be
-  read at all. Worth telling the cwinpy developers, and CI pins ConfigArgParse below 1.8.
+- **cwinpy 1.5.0 and ConfigArgParse 1.7.6 or later are incompatible.** The configuration file
+  cannot be read at all (`AttributeError` in `CWInPyConfigFileParser.parse`). 1.7.5 is the last
+  version that works, found by trying each release. Worth telling the cwinpy developers; CI pins
+  ConfigArgParse below 1.7.6. (A first guess of "1.9" was wrong: CI installed 1.7.7.)
 - **cwinpy builds in a clean environment** given the GSL development files, so the real
   `cwinpy_heterodyne` can be exercised in tests for step 4 too.
 

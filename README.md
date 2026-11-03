@@ -101,10 +101,10 @@ pytest
 
 `tests/test_pe_cwinpy.py` runs the real `cwinpy_pe` and is skipped unless cwinpy is installed.
 cwinpy needs the GSL development files to build (`libgsl-dev`), and version 1.5.0 cannot read
-its configuration files with ConfigArgParse 1.9, so:
+its configuration files with ConfigArgParse 1.7.6 or later (1.7.5 is the last that works), so:
 
 ```bash
-pip install cwinpy "ConfigArgParse<1.8"
+pip install cwinpy "ConfigArgParse<1.7.6"
 pytest tests/test_pe_cwinpy.py
 ```
 
