@@ -1,1 +1,1 @@
-"""Tests for asimov plugin template."""
+"""Tests for asimov-cwinpy."""

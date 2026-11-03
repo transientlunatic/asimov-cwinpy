@@ -21,8 +21,8 @@ automatic monitoring and resubmission of failed heterodyne jobs.
   pulsar analysis with `needs: ["O4a-heterodyne/merge"]` resolved to it.
 - Older asimov monitors ignore cross-subject `needs`, so the plugin must pin a
   recent asimov.
-- Pulsar analyses are `GravitationalWaveTransient` objects with empty GW
-  defaults (`likelihood`, `waveform`, `data`). Harmless; a non-GW class can wait.
+- Pulsar analyses were `GravitationalWaveTransient` objects with empty GW
+  defaults; analysis types (asimov #302) fix that, and the plugin uses one.
 
 ## What was read in cwinpy
 
@@ -57,12 +57,17 @@ J0534+2200 … (~200 pulsar subjects)
 - `cwinpy-merge`: runs `cwinpy_heterodyne_merge`. Asset:
   `{pulsar: {detector: {freqfactor: path}}}`.
 - `cwinpy-pe`: one `cwinpy_pe` job per pulsar, reading its slice of the merge
-  asset. Priors via the template's `PriorInterface`.
+  asset. Priors via asimov's `PriorInterface`, converted to cwinpy's format.
 - `cwinpy-run` strategy: expands a run description (run name, detectors, GPS
   span, shard size by length or by count, par-file list) into the run subject,
   shards, merge, and a subject plus PE per pulsar. Names must be deterministic.
   About 300 analyses is under the default group cap of 500 (configurable).
   `extend` can create a top-up heterodyne for pulsars added later.
+
+Analyses use the `cwinpy` analysis type (`analysis_type` on the pipelines), so a
+pulsar analysis is a generic one and has no gravitational-wave metadata or PSD
+lookup. The type also carries the vocabulary terms the pipelines share
+(`ephemeris`, `frequency factors`).
 
 Shard size is deliberately a parameter: 40–100 shards is the working estimate,
 not a constraint.
@@ -74,30 +79,35 @@ cannot be resubmitted until everything else has finished. Sharding makes a
 failed shard finish early; DAGMan resumes from the rescue file when the same
 `.dag` is resubmitted, so only the failed nodes rerun.
 
-- `resurrect()` resubmits the rescue DAG after a back-off delay, and raises
-  after a maximum number of attempts so the analysis becomes `stuck`.
-- Failures from DAGMan node logs are classified, so only transient frame-read
-  failures are retried automatically.
+Asimov core now owns the retry policy
+([#240](https://github.com/etive-io/asimov/issues/240), implemented in
+[#299](https://github.com/etive-io/asimov/pull/299)): a `retry` block on an
+analysis (or a pipeline default) sets the number of attempts and the delay and
+backoff between them, with fewer attempts for a deterministic failure; each
+failure is recorded; after the last, `on failure: halt` leaves the analysis
+`stuck` and `skip` gives it up so that what needs it goes ahead. So the plugin
+does **not** need its own back-off or attempt counting. What it provides is the
+mechanism and the classification:
+
+- `resurrect()` is called when a job has left the scheduler incomplete. It
+  inspects the DAG's node logs and raises `TransientCwinpyError` for a
+  frame-read failure, or `CwinpyError` for anything else. Asimov reads the
+  `transient` attribute to decide how many times to try again.
+- A retry resubmits through the normal `submit_dag()`, so `submit_dag()` must
+  resume: if the DAG has been written and has a rescue file, resubmit it
+  rather than building it again.
 - `while_running` reports node counts from DAGMan's logs.
 - A coverage check fails a shard or merge if the fraction of data ignored
   exceeds a threshold (the first O4 run silently ignored too much data).
+- `output_paths()` and `output_retention` (asimov
+  [#300](https://github.com/etive-io/asimov/pull/300)) let the per-chunk
+  heterodyned files be released once the merge has consumed them.
 
-### Relationship to etive-io/asimov#240
-
-[#240](https://github.com/etive-io/asimov/issues/240) proposes a general retry
-policy in asimov core: maximum attempts, back-off, failure classification,
-recording attempts, `stuck` plus a notification after the limit, and
-`halt`/`skip` semantics within a group. That overlaps with the retry logic above.
-The intended split is that core owns the policy and bookkeeping, and this
-plugin supplies the mechanism (the rescue DAG) and the classification of
-cwinpy-specific failures. Until #240 lands, the plugin keeps a small, isolated
-stopgap (attempt count and timestamp in a file in the run directory) that can be
-replaced by the core policy without touching the rescue and classification code.
-Coverage checking and DAG-specific progress reporting remain plugin concerns.
+The `TransientCwinpyError` / `CwinpyError` pair is already in `asimov_cwinpy/common.py`.
 
 ## Changes needed in asimov core
 
-All are in etive-io/asimov, [PR 298](https://github.com/etive-io/asimov/pull/298):
+Done, in [PR 298](https://github.com/etive-io/asimov/pull/298) (merged):
 
 1. [#295](https://github.com/etive-io/asimov/issues/295): save the ledger after a
    successful `resurrect()`, otherwise a resubmission's job id is lost.
@@ -108,16 +118,25 @@ All are in etive-io/asimov, [PR 298](https://github.com/etive-io/asimov/pull/298
 3. [#297](https://github.com/etive-io/asimov/issues/297): document the contract
    of `resurrect()`.
 
+Since then asimov main has gained the retry policy (#299), output retention
+(#300) and analysis and subject types (#302–#304), all of which the plugin uses.
+They are newer than the 0.8.1 release, so the plugin needs asimov from `main`
+until the next release; CI installs it from there.
+
+One gap remains: the `retry` and `on failure` keys are not in the ledger
+vocabulary, so `asimov vocabulary check` rejects them.
+
 ## Work, in order
 
-1. Core fixes (above).
-2. Scaffold: rename the package, remove the hooks module, pin asimov, register
-   the three pipelines and the strategy, add a `cwinpy` vocabulary namespace,
-   fix CI.
+1. ~~Core fixes~~ (done, #298).
+2. ~~Scaffold~~ (done): the package is renamed, the three pipelines, the
+   `cwinpy` analysis type, the `cwinpy-run` strategy and the vocabulary are
+   registered as skeletons, with tests, examples and CI.
 3. PE pipeline, tested with cwinpy's fake-ASD data (no cluster needed).
-4. Heterodyne shard pipeline: canonical config, build and submit, expected-file
-   list, completion check, assets.
-5. Failure handling as above.
+4. Heterodyne shard pipeline: canonical config, build and submit (resumable),
+   expected-file list, completion check, assets.
+5. Failure handling as above: classification, progress reporting, coverage
+   check, output retention.
 6. Merge pipeline and assets.
 7. `cwinpy-run` strategy.
 8. End-to-end: a mock run with fake `cwinpy` executables and injected frame
@@ -130,5 +149,4 @@ All are in etive-io/asimov, [PR 298](https://github.com/etive-io/asimov/pull/298
 - Does a heterodyne config for a sub-range of time reproduce the corresponding
   slice of a full-run output? Chunk edges depend on the segment list.
 - Does a DAGMan job with failed nodes really appear as Completed on the pool?
-- Pipeline names: `cwinpy-heterodyne`, `cwinpy-merge`, `cwinpy-pe`.
 - Slurm is out of scope for the DAG path.
