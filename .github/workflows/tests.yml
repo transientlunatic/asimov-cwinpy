@@ -88,7 +88,8 @@ jobs:
         asimov vocabulary lint
 
   e2e:
-    # Runs the real cwinpy_pe, through asimov's command line, on simulated noise. It is
+    # Runs the real cwinpy_pe (on simulated noise) and cwinpy_heterodyne (on fake frames),
+    # through asimov's command line and its own DAG runner. It is
     # its own job because installing cwinpy (lalsuite, and lintegrate, which is built
     # against GSL) takes a few minutes.
     runs-on: ubuntu-latest
@@ -114,6 +115,6 @@ jobs:
         pip install cwinpy "ConfigArgParse<1.7.6"
         pip install -e ".[dev]"
 
-    - name: Run cwinpy_pe through asimov
+    - name: Run the real cwinpy_pe and cwinpy_heterodyne through asimov
       run: |
-        pytest tests/test_pe_cwinpy.py --no-cov -v
+        pytest tests/test_pe_cwinpy.py tests/test_heterodyne_cwinpy.py --no-cov -v
