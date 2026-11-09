@@ -70,7 +70,6 @@ class HeterodynePipeline(CwinpyPipeline):
 
     name = "cwinpy-heterodyne"
     pipeline_name = "cwinpy-heterodyne"
-    step = "4"
 
     available_outputs = [ASSET, "config"]
     declares_inputs = True

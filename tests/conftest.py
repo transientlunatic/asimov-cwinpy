@@ -5,7 +5,7 @@ import pytest
 from asimov.analysis_types import reset_analysis_types
 from asimov.cli.application import apply_page
 from asimov.cli.project import make_project
-from asimov.ledger import YAMLLedger
+from asimov.ledger import DatabaseLedger, YAMLLedger
 
 PRIORS = """\
 priors:
@@ -15,12 +15,21 @@ priors:
 
 
 class Project:
-    """A project in a temporary directory."""
+    """A project in a temporary directory, on the YAML ledger or the database one."""
 
-    def __init__(self, root):
+    def __init__(self, root, engine="yamlfile"):
         self.root = root
-        make_project(name="cwinpy test", root=str(root), engine="yamlfile")
-        self.ledger = YAMLLedger(".asimov/ledger.yml")
+        self.engine = engine
+        make_project(name="cwinpy test", root=str(root), engine=engine)
+        self.ledger = self.open()
+
+    def open(self):
+        """The ledger, read afresh from the file."""
+        if self.engine == "yamlfile":
+            return YAMLLedger(".asimov/ledger.yml")
+        return DatabaseLedger(
+            engine="sqlalchemy", location=f"sqlite:///{self.root}/.asimov/ledger.db"
+        )
 
     def apply(self, text, subject=None):
         path = self.root / "blueprint.yaml"
@@ -28,8 +37,16 @@ class Project:
         return apply_page(str(path), event=subject, ledger=self.ledger)
 
     def analysis(self, subject, name):
-        loaded = YAMLLedger(".asimov/ledger.yml")
+        loaded = self.open()
         return {a.name: a for a in loaded.get_event(subject)[0].productions}[name]
+
+    def set_status(self, subject, name, status):
+        """Set the status of an analysis, as asimov does when it submits one."""
+        ledger = self.open()
+        event = ledger.get_event(subject)[0]
+        [a for a in event.productions if a.name == name][0].status = status
+        ledger.update_event(event)
+        ledger.save()
 
 
 @pytest.fixture
@@ -38,6 +55,15 @@ def project(tmp_path, monkeypatch):
     reset_analysis_types()
     monkeypatch.chdir(tmp_path)
     yield Project(tmp_path)
+    reset_analysis_types()
+
+
+@pytest.fixture
+def database_project(tmp_path, monkeypatch):
+    """A project on the database ledger, which is the one asimov makes by default."""
+    reset_analysis_types()
+    monkeypatch.chdir(tmp_path)
+    yield Project(tmp_path, engine="sqlite")
     reset_analysis_types()
 
 

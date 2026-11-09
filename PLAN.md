@@ -143,7 +143,9 @@ The retry policy's keys were not in the ledger vocabulary at first, so
    frames; no HTCondor.
 5. Failure handling, the rest: progress reporting from DAGMan's logs, the coverage threshold,
    and output retention. (Classification of failures is done, in step 4.)
-6. Merge pipeline and assets.
+6. ~~Merge pipeline~~ (done): `cwinpy-merge` plans the merges from the shards' files, runs them
+   as one job that checks every input first, and provides the merged files for `cwinpy-pe`.
+   Tested with the real cwinpy through the whole chain (shards, merge, parameter estimation).
 7. `cwinpy-run` strategy.
 8. End-to-end: a mock run with fake `cwinpy` executables and injected frame
    failures to prove the retry loop; O1 hardware injections on LDG; a small O4
@@ -200,6 +202,22 @@ Found by running cwinpy, not from its documentation:
 4. That a real unreadable disk gives the signatures above, and not only a truncated file does.
 5. That the per-node `.err` files are where `failed_nodes` looks (`<rundir>/log/`), after a
    retry has overwritten them.
+
+## What step 6 taught us
+
+- **cwinpy's `heterodyne_merge` silently drops files that do not exist** and merges the rest, so a
+  lost shard file would leave a gap in the data and no failure. The merge job checks every input.
+- **Asimov's assets are by name and `_previous_assets()` keeps the last**: an analysis that needs
+  several shards, each with `heterodyned files`, sees only one of them. The merge reads each
+  dependency's assets itself. Anything else that combines analyses will need to as well.
+- **A merge needs a status file of its own.** Unlike the shard's DAG (read from DAGMan's log) and
+  the PE job (read from HTCondor's), a job that asimov runs through any scheduler is best asked
+  by having it say how it went; and when it has said nothing it is not taken to have failed.
+- **Asimov crashes on the YAML ledger when an analysis needs one of another subject** at
+  `manage submit` ([etive-io/asimov#321](https://github.com/etive-io/asimov/issues/321)). The
+  database ledger, which is the default, is fine, and the chain test uses it.
+- The three pipelines fit together: what `cwinpy-heterodyne` provides is what `cwinpy-merge`
+  reads, and what that provides is what `cwinpy-pe` reads, checked on real data.
 
 ## Open questions
 

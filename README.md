@@ -5,21 +5,21 @@ An [asimov](https://github.com/etive-io/asimov) plugin to run the
 data of an observing run for many pulsars, merging the result, and estimating the
 parameters of the signal of each pulsar.
 
-> **Status: pre-alpha.** `cwinpy-pe` and `cwinpy-heterodyne` work: each has been run
-> through asimov with the real cwinpy (heterodyne on fake frames, with the jobs run
-> without HTCondor). `cwinpy-merge` and the `cwinpy-run` strategy are skeletons that
-> asimov finds but that cannot build or submit anything yet. Nothing has been run on an
-> HTCondor pool. [`PLAN.md`](PLAN.md) says what is done and what is next.
+> **Status: pre-alpha.** `cwinpy-heterodyne`, `cwinpy-merge` and `cwinpy-pe` work, and have been
+> run through asimov together with the real cwinpy: two shards of fake frames, merged, then
+> analysed (the shards' DAGs are run without HTCondor). Only the `cwinpy-run` strategy is not
+> written. Nothing has been run on an HTCondor pool. [`PLAN.md`](PLAN.md) says what is done and
+> what is next.
 
 ## What it provides
 
 | Name | Kind | What it does |
 |---|---|---|
 | `cwinpy-heterodyne` | pipeline | Heterodynes one *shard* (a span of time) of an observing run for all of its pulsars, as one HTCondor DAG made by cwinpy. |
-| `cwinpy-merge` | pipeline | Merges the heterodyned files of the shards of a run, for each pulsar, detector and frequency factor. |
+| `cwinpy-merge` | pipeline | Merges the heterodyned files of the shards of a run, for each pulsar, detector and frequency factor, into one file each. |
 | `cwinpy-pe` | pipeline | Estimates the parameters of the signal of one pulsar, as a single `cwinpy_pe` job. |
 | `cwinpy` | analysis type | A generic analysis, with no gravitational-wave transient metadata. The pipelines above declare it. |
-| `cwinpy-run` | strategy | Will expand a description of a run into its shards, merge, and one analysis per pulsar. |
+| `cwinpy-run` | strategy | Will expand a description of a run into its shards, merge, and one analysis per pulsar (not written yet). |
 
 ## How a run is laid out
 
@@ -93,6 +93,36 @@ left alone, and not treated as failed. Submitting a DAG a second time needs
 
 The result is the `heterodyned files` asset, `{pulsar: {detector: {factor: [path, ...]}}}`,
 for `cwinpy-merge`.
+
+### `cwinpy-merge`
+
+One analysis merges the output of all the shards of a run, so it `needs` them:
+
+```yaml
+kind: analysis
+name: merge
+pipeline: cwinpy-merge
+needs: [shard-0001, shard-0002]
+```
+
+It has no settings of its own. Its configuration, which asimov makes when every shard is
+complete, is the *plan* of the merge as JSON: for each pulsar, detector and frequency factor, which
+files of which shards make which merged file. One job (`python -m asimov_cwinpy.merge_job`) makes
+all the merges, because starting cwinpy takes longer than a merge does. It needs this package, as
+well as cwinpy, in the environment it runs in.
+
+* Every shard it `needs` must be complete. One that is not is an error, since merging without it
+  would leave a gap in the data without saying so. A shard that asimov gave up on (`on failure:
+  skip`) is left out, with a warning.
+* cwinpy's own `heterodyne_merge` **silently drops any input file that does not exist** and merges
+  what is left. The job checks every input first: a missing file stops everything, and is a
+  transient failure (a disk may have gone); an empty one stops everything, and is not.
+* The job writes a status file, which is how the pipeline knows how it went on any scheduler.
+  The merge is complete when it says it succeeded *and* every merged file has data. A job that
+  has gone without saying anything is left alone, not taken to have failed.
+
+The result is the `heterodyned data` asset, `{pulsar: {detector: {factor: path}}}`, which
+`cwinpy-pe` reads.
 
 ### `cwinpy-pe`
 
