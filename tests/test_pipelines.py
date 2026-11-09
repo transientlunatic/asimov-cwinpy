@@ -42,18 +42,6 @@ def test_a_pipeline_refuses_an_analysis_of_another(cls):
         cls(production(other.pipeline_name))
 
 
-#: The pipelines that are not implemented yet.
-SKELETONS = [MergePipeline]
-
-
-@pytest.mark.parametrize("cls", SKELETONS)
-def test_building_and_submitting_say_which_step_of_the_plan_implements_them(cls):
-    pipeline = cls(production(cls.pipeline_name))
-    for method in (pipeline.build_dag, pipeline.submit_dag):
-        with pytest.raises(NotImplementedError, match=f"step {cls.step} of PLAN.md"):
-            method()
-
-
 def test_the_strategy_says_it_is_not_implemented():
     with pytest.raises(StrategyError, match="not implemented"):
         RunStrategy().expand({}, MagicMock())

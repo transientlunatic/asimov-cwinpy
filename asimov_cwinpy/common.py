@@ -1,9 +1,8 @@
 """
 What the three cwinpy pipelines share.
 
-The pipelines are skeletons for now: they can be found by asimov and refuse a
-blueprint that names the wrong pipeline, but building and submitting is not
-implemented (see ``PLAN.md`` for the order in which it will be).
+What the three cwinpy pipelines share: the analysis type, the check that an analysis is of
+the pipeline that was asked to run it, and the errors that say how a failure should be treated.
 """
 
 try:
@@ -55,15 +54,11 @@ class CwinpyPipeline(Pipeline):
     The base of the cwinpy pipelines.
 
     A subclass sets :attr:`pipeline_name` to the name it is registered under
-    (the ``pipeline:`` of a blueprint), and :attr:`step` to the step of
-    ``PLAN.md`` at which it is implemented.
+    (the ``pipeline:`` of a blueprint).
     """
 
     #: The name the pipeline is registered under in ``asimov.pipelines``.
     pipeline_name = ""
-
-    #: The step of ``PLAN.md`` which implements this pipeline.
-    step = ""
 
     #: A cwinpy analysis is not a gravitational-wave transient one.
     analysis_type = ANALYSIS_TYPE
@@ -83,17 +78,3 @@ class CwinpyPipeline(Pipeline):
                 f"Pipeline mismatch: {self.pipeline_name} was asked to run an analysis "
                 f"of pipeline {production.pipeline}."
             )
-
-    def _not_implemented(self, what):
-        raise NotImplementedError(
-            f"{self.pipeline_name} cannot {what} yet: it is a skeleton. "
-            f"It is implemented in step {self.step} of PLAN.md."
-        )
-
-    def build_dag(self, dryrun=False):
-        """Build what is submitted (not implemented)."""
-        self._not_implemented("be built")
-
-    def submit_dag(self, dryrun=False):
-        """Submit the analysis to the scheduler (not implemented)."""
-        self._not_implemented("be submitted")

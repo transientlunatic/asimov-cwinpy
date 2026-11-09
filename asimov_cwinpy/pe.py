@@ -48,7 +48,6 @@ class PEPipeline(CwinpyPipeline):
 
     name = "cwinpy-pe"
     pipeline_name = "cwinpy-pe"
-    step = "3"
 
     available_outputs = ["samples", "config"]
     declares_inputs = True
