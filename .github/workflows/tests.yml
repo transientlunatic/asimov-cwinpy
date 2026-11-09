@@ -14,8 +14,9 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
 
@@ -63,7 +64,7 @@ jobs:
     # against asimov's ledger vocabulary. Fails on unknown keys, keys in a
     # pipeline's namespace which duplicate a standard term, and registered terms
     # which clash with core.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
 
@@ -92,7 +93,7 @@ jobs:
     # through asimov's command line and its own DAG runner. It is
     # its own job because installing cwinpy (lalsuite, and lintegrate, which is built
     # against GSL) takes a few minutes.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
 
