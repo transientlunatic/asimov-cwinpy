@@ -43,6 +43,11 @@ def frames(tmp_path_factory):
     return {"root": root, "caches": made["caches"]}
 
 
+#: The fake frames are two shards of 2048 s, too little data for the plots of the time series and
+#: the upper limits (cwinpy cannot make a power spectrum of 32 points); the rest is made.
+SUMMARY_SETTINGS = "cwinpy-summary:\n  time series: false\n  upper limit plot: false\n"
+
+
 def blueprint(frames):
     root = frames["root"]
     caches = frames["caches"]
@@ -69,6 +74,8 @@ def blueprint(frames):
         "---\nkind: analysis\nname: pe\npipeline: cwinpy-pe\nevent: J0534+2200\n"
         "needs: ['O4a-heterodyne/merge']\n"
         "sampler:\n  sampler: dynesty\n  sampler kwargs: {nlive: 100, dlogz: 1.0}\n"
+        "---\nkind: analysis\nname: summary\npipeline: cwinpy-summary\nevent: O4a-heterodyne\n"
+        "needs: ['J0534+2200/pe']\n" + SUMMARY_SETTINGS
     )
     return text
 
@@ -92,6 +99,7 @@ def strategy_blueprint(frames):
         "      iota: {type: sine, minimum: 0.0, maximum: 3.141592653589793}\n"
         "      psi: {type: uniform, minimum: 0.0, maximum: 1.5707963267948966}\n"
         "    sampler: {sampler: dynesty, sampler kwargs: {nlive: 100, dlogz: 1.0}}\n"
+        "  summary:\n    settings: {time series: false, upper limit plot: false}\n"
     )
 
 
@@ -183,6 +191,23 @@ def test_two_shards_are_merged_and_the_merge_is_analysed(
     posterior = bilby.result.read_in_result(result)
     assert sorted(posterior.search_parameter_keys) == ["h0", "iota", "phi0", "psi"]
     assert len(posterior.posterior) > 10
+
+    # The summary pages of cwinpy, made from the parameter estimation that was run as a job of
+    # its own, are made, copied to the web directory, and linked from the report of asimov
+    asimov(project, "manage", "build")
+    asimov(project, "manage", "submit")
+    wait_for(project, "O4a-heterodyne", "summary")
+    summary = project.analysis("O4a-heterodyne", "summary").pipeline
+    home = summary.collect_assets()["summary pages"]
+    assert os.path.getsize(home) > 0
+    page = os.path.join(summary.production.rundir, "pages", "html", "J0534+2200_H1L1.html")
+    assert os.path.exists(page), os.listdir(os.path.dirname(home))
+    webroot = project.root / "pages" / "O4a-heterodyne" / "summary" / "html"
+    assert (webroot / "home.html").exists() and (webroot / "J0534+2200_H1L1.html").exists()
+    assert "J0534+2200" in (webroot / "home.html").read_text()
+    asimov(project, "report", "html")
+    report = (project.root / "pages" / "index.html").read_text()
+    assert "O4a-heterodyne/summary/html/home.html" in report
 
     # Everything is finished: the per-chunk files, which the merge has used, may be released,
     # and what the parameter estimation reads and made is not

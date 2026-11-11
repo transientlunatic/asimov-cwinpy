@@ -12,8 +12,9 @@ from asimov_cwinpy.common import CwinpyError, TransientCwinpyError
 from asimov_cwinpy.heterodyne import HeterodynePipeline
 from asimov_cwinpy.merge import MergePipeline
 from asimov_cwinpy.pe import PEPipeline
+from asimov_cwinpy.summary import SummaryPipeline
 
-PIPELINES = [HeterodynePipeline, MergePipeline, PEPipeline]
+PIPELINES = [HeterodynePipeline, MergePipeline, PEPipeline, SummaryPipeline]
 
 
 def production(pipeline):

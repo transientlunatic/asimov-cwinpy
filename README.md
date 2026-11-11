@@ -5,10 +5,10 @@ An [asimov](https://github.com/etive-io/asimov) plugin to run the
 data of an observing run for many pulsars, merging the result, and estimating the
 parameters of the signal of each pulsar.
 
-> **Status: pre-alpha.** `cwinpy-heterodyne`, `cwinpy-merge` and `cwinpy-pe` work, and have been
-> run through asimov together with the real cwinpy: two shards of fake frames, merged, then
-> analysed (the shards' DAGs are run without HTCondor), from a blueprint that the `cwinpy-run`
-> strategy expands. Nothing has been run on an HTCondor pool. [`PLAN.md`](PLAN.md) says what is done and
+> **Status: pre-alpha.** `cwinpy-heterodyne`, `cwinpy-merge`, `cwinpy-pe` and `cwinpy-summary` work,
+> and have been run through asimov together with the real cwinpy: two shards of fake frames, merged,
+> analysed, and summarised (the shards' DAGs are run without HTCondor), from a blueprint that the
+> `cwinpy-run` strategy expands. Nothing has been run on an HTCondor pool. [`PLAN.md`](PLAN.md) says what is done and
 > what is next.
 
 ## What it provides
@@ -18,6 +18,7 @@ parameters of the signal of each pulsar.
 | `cwinpy-heterodyne` | pipeline | Heterodynes one *shard* (a span of time) of an observing run for all of its pulsars, as one HTCondor DAG made by cwinpy. |
 | `cwinpy-merge` | pipeline | Merges the heterodyned files of the shards of a run, for each pulsar, detector and frequency factor, into one file each. |
 | `cwinpy-pe` | pipeline | Estimates the parameters of the signal of one pulsar, as a single `cwinpy_pe` job. |
+| `cwinpy-summary` | pipeline | Makes cwinpy's summary pages for the parameter estimations of a run, and links them from asimov's report. |
 | `cwinpy` | analysis type | A generic analysis, with no gravitational-wave transient metadata. The pipelines above declare it. |
 | `cwinpy-run` | strategy | Expands one description of a run into its shards, merge, and a subject with a parameter estimation for each pulsar. |
 
@@ -27,6 +28,7 @@ parameters of the signal of each pulsar.
 O4a-heterodyne            (a "run" subject)
   shard-0001 … shard-00NN   cwinpy-heterodyne
   merge                     cwinpy-merge        needs all the shards
+  summary                   cwinpy-summary      needs the pe of every pulsar (optional)
 J0534+2200 …              (one subject per pulsar)
   pe                        cwinpy-pe           needs O4a-heterodyne/merge
 ```
@@ -65,6 +67,7 @@ strategy:
 | `heterodyne` | `data`, `scheduler` and `retry` go on every shard as they are; `settings` goes under `cwinpy-heterodyne:` (`strict data requirement`, `segment lists`, ...). |
 | `merge` | `scheduler`, `retry`. |
 | `pe` | `sampler`, `scheduler`, `retry` go on each parameter estimation; `priors` on each pulsar; `settings` under `cwinpy-pe:`. |
+| `summary` | Optional. `true`, or a mapping of `settings` (under `cwinpy-summary:`), `scheduler` and `retry`: adds the `summary` analysis, which needs the parameter estimation of every pulsar. |
 
 A shard is a whole number of jobs, so `shards: {count: 40}` makes about 40 (fewer if there are
 fewer jobs), with the last one short. Pulsars are named by the `PSRJ` of their `.par` file, or
@@ -208,6 +211,45 @@ well as cwinpy, in the environment it runs in.
 The result is the `heterodyned data` asset, `{pulsar: {detector: {factor: path}}}`, which
 `cwinpy-pe` reads.
 
+### `cwinpy-summary`
+
+cwinpy makes pages of results for a set of pulsars (`cwinpy_generate_summary_pages`): a table of
+upper limits, and for each pulsar its posteriors and data. It makes them for the *set*, from the
+configuration of cwinpy's own pipeline, which finds its results and data by the names and
+directories that cwinpy gives them. The `cwinpy_pe` jobs here are separate and write where asimov
+says, so this analysis, which needs the `pe` of every pulsar of a run (and so is built when they have
+all finished), *stages* what cwinpy looks for in its run directory and writes the configuration that
+points at it:
+
+| Staged | As |
+|---|---|
+| `par/<pulsar>.par`, `data/<detector>_<factor>f_<pulsar>.hdf5` | hard links to the ephemeris and the merged heterodyned data (copies if the file system cannot link), because cwinpy refuses a symbolic link as an input |
+| `results/<pulsar>/cwinpy_pe_<detectors>_<pulsar>_result.hdf5` | a symbolic link to the result |
+
+One job (`python -m asimov_cwinpy.summary_job`) then makes the pages, and says how it went in a status
+file, as the merge does. When it has succeeded the pages are copied to the project's web directory, in
+`<webroot>/<run subject>/<analysis>/` (so, `.../O4a-heterodyne/summary/html/home.html`), and
+`result_pages()` gives asimov's report that link, which it shows for the finished analysis. The pages
+use relative links, so they can be moved.
+
+| Ledger key (under `cwinpy-summary:`) | `generate_summary_pages` |
+|---|---|
+| `posteriors`, `individual posteriors`, `time series`, `upper limit plot`, `odds plot` | `showposteriors`, `showindividualposteriors`, `showtimeseries`, `upperlimitplot`, `oddsplot` |
+| `snr`, `odds` | `showsnr`, `showodds` |
+| `sort by`, `sort descending`, `only joint`, `only msps` | `sortby`, `sortdescending`, `onlyjoint`, `onlymsps` |
+
+What is not set is left to cwinpy's default. The pulsars of one summary have to share their
+detectors and frequency factors (cwinpy takes one set for all of them), so analyses with different ones
+need separate summaries; a pulsar whose parameter estimation used simulated data cannot be in it, as
+there is no heterodyned data to show. `cweqgen`, which cwinpy needs for the table of upper limits, has to
+be installed where the job runs. The plots of the time series and the upper limits read the heterodyned
+data, and cwinpy cannot make them from a very short stretch of it (32 points, as in the tests): switch
+them off with `time series: false` and `upper limit plot: false` for a test of that size.
+
+A batch of pulsars added later is not added to a `summary` that exists, because what exists is not
+changed: its `needs` are those of the blueprint when it was first applied. Make another summary of them,
+or run the analysis again with the new `needs`.
+
 ### `cwinpy-pe`
 
 One analysis is one pulsar (the name of its subject), run as a single `cwinpy_pe` job.
@@ -256,8 +298,8 @@ cwinpy needs the GSL development files to build (`libgsl-dev`), and version 1.5.
 its configuration files with ConfigArgParse 1.7.6 or later (1.7.5 is the last that works), so:
 
 ```bash
-pip install cwinpy "ConfigArgParse<1.7.6"
-pytest tests/test_pe_cwinpy.py tests/test_heterodyne_cwinpy.py
+pip install cwinpy "ConfigArgParse<1.7.6" cweqgen
+pytest tests/test_pe_cwinpy.py tests/test_heterodyne_cwinpy.py tests/test_chain_cwinpy.py
 ```
 
 > **Using Claude Code?** The repository carries an

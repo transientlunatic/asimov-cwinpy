@@ -235,6 +235,36 @@ Found by running cwinpy, not from its documentation:
 - The three pipelines fit together: what `cwinpy-heterodyne` provides is what `cwinpy-merge`
   reads, and what that provides is what `cwinpy-pe` reads, checked on real data.
 
+## What the summary pages taught us
+
+- **cwinpy makes pages for a set of pulsars, from the configuration of its own pipeline** (`pe_pipeline(config,
+  build=False)` gives it `resultsbase`, `resultsfiles`, `datadict` and `pulsardict`), and finds
+  the results by a naming convention: `<resdir>/<PSRJ>/cwinpy_pe_<detectors>_<PSRJ>_result.hdf5`
+  (`find_results_files`). It was tried first on real output of the chain test, by hand, before any
+  code was written.
+- **It works with results made by separate `cwinpy_pe` jobs**, if what it looks for is staged. Three
+  things were found by trying: cwinpy checks, even with `build = False`, that every input file is
+  inside `basedir`; it refuses symbolic links as inputs (`no_symlinks=True`, for HTCondor's file
+  transfer), which hard links get round and a symbolic link to the *result* does not need to; and
+  the table of upper limits needs `cweqgen`, which is not a dependency of cwinpy.
+- **The pages use relative links**, so they can be copied into the web directory. Asimov's report links
+  a pipeline's pages through `Pipeline.result_pages()`, relative to the report, for a finished
+  analysis; the test checks that the report of the event contains the link, and the chain test that
+  `asimov report html` does.
+- **The merge's machinery is shared.** `cwinpy-merge` and `cwinpy-summary` are each one job that reads a
+  plan and writes a status file, so what they have in common (submitting it, the status file, which
+  Python runs it) is `asimov_cwinpy.singlejob.SingleJobPipeline`.
+- Unverified: the plots of the time series and the upper limits fail on very short data
+  (`ValueError: The time bin selected is invalid`, with 32 points), so the chain test switches them
+  off; with a day or more of data they have not been tried here. They are on by default, as cwinpy's
+  are.
+- Not done: a batch of pulsars added later is not added to a `summary` that exists. And the pages are
+  made in one job for all of the pulsars: for 200 of them how long that takes, and how big the pages
+  are (about 0.4 MB for one pulsar, without the time series), is not known.
+- Mutation testing: 31 breaks of the new code; two survived because the tests could not tell (the
+  sort of the pulsars, because asimov already gives them in order; and two parameter estimations of one
+  pulsar, which no test had), and have tests now.
+
 ## What the coverage check and retention taught us
 
 - **Coverage is measured, not assumed.** Every output file records the segments of its data, and
@@ -309,14 +339,3 @@ no expected output, rather than an empty file, which would stop a shard from com
   slice of a full-run output? Chunk edges depend on the segment list.
 - Does a DAGMan job with failed nodes really appear as Completed on the pool?
 - Slurm is out of scope for the DAG path.
-- **Report pages.** cwinpy makes summary pages (`cwinpy_generate_summary_pages`, from
-  `cwinpy.pe.summary`) for the whole set of pulsars, not per `cwinpy_pe` job: it builds the PE
-  pipeline's object from a `cwinpy_knope_pipeline`/`cwinpy_pe_pipeline` configuration
-  (`pe_pipeline(config, build=False)`) and reads its `resultsbase` and `resultsfiles`. Asimov's run
-  report links a pipeline's pages through `Pipeline.result_pages()` (a list of `(label, url)` relative
-  to the report root, shown once the analysis is finished). This plugin does neither yet: nothing is
-  generated, and `result_pages()` returns nothing. A `cwinpy-summary` analysis that needs every PE of a
-  run, writes such a configuration pointing at their results, runs the generator into the web
-  directory and returns its page from `result_pages()` would do both. Not tried: whether
-  `pe_pipeline(build=False)` accepts a configuration that was written to describe results made by
-  separate `cwinpy_pe` jobs.

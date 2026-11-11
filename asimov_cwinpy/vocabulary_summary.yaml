@@ -1,0 +1,61 @@
+# The ledger terms which only cwinpy-summary understands.
+#
+# Registered through the `asimov.vocabulary` entry point. Every term is optional: cwinpy's own
+# defaults are used for what is not given. They are the options of `cwinpy_generate_summary_pages`.
+terms:
+  cwinpy-summary:
+    description: Settings which only cwinpy-summary understands.
+    children:
+      posteriors:
+        type: boolean
+        description: >-
+          Make plots of the joint posteriors of all the parameters of each pulsar. cwinpy's default
+          is true.
+      individual posteriors:
+        type: boolean
+        description: >-
+          Also make a plot of the marginal posterior of each parameter of each pulsar. cwinpy's
+          default is false.
+      time series:
+        type: boolean
+        description: >-
+          Make plots of the heterodyned time series of each pulsar, and their spectra. cwinpy's
+          default is true.
+      upper limit plot:
+        type: boolean
+        description: >-
+          Make a plot of the upper limits on the amplitude as a function of frequency. It uses the
+          power spectrum of the heterodyned data. cwinpy's default is true.
+      odds plot:
+        type: boolean
+        description: >-
+          Make plots of the odds against the signal-to-noise ratio and the frequency (they need `snr`
+          and `odds`). cwinpy's default is true.
+      snr:
+        type: boolean
+        description: >-
+          Calculate and show the optimal matched-filter signal-to-noise ratio of the recovered signal.
+          cwinpy's default is false.
+      odds:
+        type: boolean
+        description: >-
+          Calculate and show the log Bayesian odds of the signal against noise. cwinpy's default is
+          false.
+      sort by:
+        type: string
+        description: >-
+          The parameter to sort the table of results by: PSRJ, F0, F1, DIST, H0, H0SPINDOWN, ELL,
+          Q22, SDRAT or ODDS. cwinpy's default is PSRJ.
+      sort descending:
+        type: boolean
+        description: Sort the table of results in descending order. cwinpy's default is ascending.
+      only joint:
+        type: boolean
+        description: >-
+          Only show the joint (multi-detector) results in the table, and not those of each detector.
+          cwinpy's default is false.
+      only msps:
+        type: boolean
+        description: >-
+          Only show recycled millisecond pulsars (a period under 30 ms and a magnetic field under
+          1e11 G). cwinpy's default is false.
