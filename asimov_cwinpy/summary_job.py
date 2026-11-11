@@ -39,6 +39,23 @@ def check_inputs(paths):
         )
 
 
+def check_environment():
+    """
+    Raise, saying what to do, if what cwinpy needs to make the pages is not installed.
+
+    cwinpy copies the style sheets of the pages with ``pkg_resources``, which ``setuptools``
+    stopped providing in version 82, and a bare ``No module named 'pkg_resources'`` does not say so.
+    """
+    try:
+        import pkg_resources  # noqa: F401
+    except ImportError as error:
+        raise RuntimeError(
+            "cwinpy makes its summary pages with pkg_resources, which is not installed in the "
+            "environment of the job: install setuptools older than 82 "
+            "(pip install 'setuptools<82')."
+        ) from error
+
+
 def run(plan_path):
     """
     Make the pages in the plan.
@@ -54,6 +71,7 @@ def run(plan_path):
     home = os.path.join(plan["outpath"], HOME)
     try:
         check_inputs(plan["inputs"])
+        check_environment()
         from cwinpy.pe.summary import generate_summary_pages
 
         generate_summary_pages(

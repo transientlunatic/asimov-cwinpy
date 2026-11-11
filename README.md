@@ -241,8 +241,9 @@ use relative links, so they can be moved.
 What is not set is left to cwinpy's default. The pulsars of one summary have to share their
 detectors and frequency factors (cwinpy takes one set for all of them), so analyses with different ones
 need separate summaries; a pulsar whose parameter estimation used simulated data cannot be in it, as
-there is no heterodyned data to show. `cweqgen`, which cwinpy needs for the table of upper limits, has to
-be installed where the job runs. The plots of the time series and the upper limits read the heterodyned
+there is no heterodyned data to show. `cweqgen`, which cwinpy needs for the table of upper limits, and `setuptools<82` (cwinpy
+imports `pkg_resources` to copy the style sheets, and `setuptools` 82 and later do not have it) have to
+be installed where the job runs; the job says so if either is missing. The plots of the time series and the upper limits read the heterodyned
 data, and cwinpy cannot make them from a very short stretch of it (32 points, as in the tests): switch
 them off with `time series: false` and `upper limit plot: false` for a test of that size.
 
@@ -298,7 +299,7 @@ cwinpy needs the GSL development files to build (`libgsl-dev`), and version 1.5.
 its configuration files with ConfigArgParse 1.7.6 or later (1.7.5 is the last that works), so:
 
 ```bash
-pip install cwinpy "ConfigArgParse<1.7.6" cweqgen
+pip install cwinpy "ConfigArgParse<1.7.6" cweqgen "setuptools<82"
 pytest tests/test_pe_cwinpy.py tests/test_heterodyne_cwinpy.py tests/test_chain_cwinpy.py
 ```
 

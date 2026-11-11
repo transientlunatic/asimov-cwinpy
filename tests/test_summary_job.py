@@ -33,6 +33,8 @@ class FakeGenerator:
 
 @pytest.fixture
 def generator(monkeypatch):
+    # (whether pkg_resources is installed is not what these tests are about)
+    monkeypatch.setitem(sys.modules, "pkg_resources", types.ModuleType("pkg_resources"))
     fake = FakeGenerator()
     module = types.ModuleType("cwinpy.pe.summary")
     module.generate_summary_pages = fake
@@ -122,6 +124,24 @@ def test_a_file_system_that_is_unwell_is_transient(generator, tmp_path, number):
     path, status = plan(tmp_path, present(tmp_path, "a"))
     summary_job.run(path)
     assert said(status)["transient"] is True
+
+
+def test_a_missing_pkg_resources_is_said_in_words_that_say_what_to_install(
+    generator, tmp_path, monkeypatch
+):
+    monkeypatch.setitem(sys.modules, "pkg_resources", None)
+    path, status = plan(tmp_path, present(tmp_path, "a"))
+    assert summary_job.run(path) == 1
+    found = said(status)
+    assert found["transient"] is False
+    assert "setuptools<82" in found["error"] and "pkg_resources" in found["error"]
+    assert generator.calls == []  # before cwinpy is run
+
+
+def test_pkg_resources_being_there_is_not_a_problem(generator, tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "pkg_resources", types.ModuleType("pkg_resources"))
+    path, status = plan(tmp_path, present(tmp_path, "a"))
+    assert summary_job.run(path) == 0
 
 
 def test_pages_that_cwinpy_did_not_make_are_a_failure(generator, tmp_path):

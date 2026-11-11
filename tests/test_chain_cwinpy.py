@@ -118,6 +118,17 @@ def asimov(project, *arguments):
     return done.stdout
 
 
+def diagnose(project, subject, name, lines=30):
+    """What the job of an analysis said, so that a failure of it can be read in the log of CI."""
+    rundir = project.analysis(subject, name).pipeline.production.rundir
+    found = []
+    for path in sorted(Path(rundir).glob("*")):
+        if path.suffix in (".err", ".out") or path.name.endswith("status.json"):
+            text = "\n".join(path.read_text(errors="replace").splitlines()[-lines:])
+            found.append(f"--- {path.name}:\n{text}")
+    return "\n".join(found) or f"(nothing in {rundir})"
+
+
 def wait_for(project, subject, name, seconds=240):
     """Run the monitor until an analysis is finished."""
     deadline = time.time() + seconds
@@ -126,7 +137,10 @@ def wait_for(project, subject, name, seconds=240):
         asimov(project, "monitor")
         if project.analysis(subject, name).status == "finished":
             return
-    pytest.fail(f"{subject}/{name} is {project.analysis(subject, name).status}, not finished")
+    pytest.fail(
+        f"{subject}/{name} is {project.analysis(subject, name).status}, not finished\n"
+        + diagnose(project, subject, name)
+    )
 
 
 @pytest.mark.parametrize("source", ["explicit", "strategy"])
