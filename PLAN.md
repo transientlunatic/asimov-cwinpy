@@ -141,8 +141,9 @@ The retry policy's keys were not in the ledger vocabulary at first, so
    the files to expect, submits it (and submits it again to resume it), recognises completion, and
    classifies failures. Tested with the real runner and the real `cwinpy_heterodyne` jobs on fake
    frames; no HTCondor.
-5. Failure handling, the rest: progress reporting from DAGMan's logs, the coverage threshold,
-   and output retention. (Classification of failures is done, in step 4.)
+5. Failure handling, the rest: ~~progress reporting from DAGMan's logs~~ (done: `while_running` of
+   `cwinpy-heterodyne`), the coverage threshold, and output retention. (Classification of
+   failures is done, in step 4.)
 6. ~~Merge pipeline~~ (done): `cwinpy-merge` plans the merges from the shards' files, runs them
    as one job that checks every input first, and provides the merged files for `cwinpy-pe`.
    Tested with the real cwinpy through the whole chain (shards, merge, parameter estimation).
@@ -205,6 +206,18 @@ Found by running cwinpy, not from its documentation:
 4. That a real unreadable disk gives the signatures above, and not only a truncated file does.
 5. That the per-node `.err` files are where `failed_nodes` looks (`<rundir>/log/`), after a
    retry has overwritten them.
+6. That DAGMan's log has the table the progress is read from, in the form the tests write:
+
+   ```
+   Of 2000 nodes total:
+    Done     Pre   Queued    Post   Ready   Un-Ready   Failed
+     ===     ===      ===     ===     ===        ===      ===
+     120       0       20       0    1860          0        0
+   ```
+
+   (with the date and time at the start of each line), and that it is written often enough to be
+   current, and within the last 100 kB of the log. If it is not there the monitor says nothing
+   about progress, and nothing else is affected.
 
 ## What step 6 taught us
 
@@ -221,6 +234,24 @@ Found by running cwinpy, not from its documentation:
   database ledger, which is the default, is fine, and the chain test uses it.
 - The three pipelines fit together: what `cwinpy-heterodyne` provides is what `cwinpy-merge`
   reads, and what that provides is what `cwinpy-pe` reads, checked on real data.
+
+## What progress reporting taught us
+
+- **Where the counts come from.** DAGMan writes a table of how many nodes are done, queued, ready
+  and failed to its own log, which is also where the end of the DAG is read. One read of the end of
+  that file gives the counts; counting the output files instead would be a few thousand `stat`s of
+  a shared file system for each shard on every monitor cycle, and cannot tell a job that is running
+  from one that has not started.
+- **It is only a report.** `while_running` is called by the monitor while the DAG is in the queue; it
+  writes `progress` (the counts and when they were read) to the ledger and one line to the monitor,
+  and decides nothing: completion and failure are still read as before. A log with no table, or a
+  table cut off, says nothing.
+- **A `failed` node is one that has used up its retries**, so a nonzero count here while the DAG runs
+  is a job that will be reported when the DAG ends, and the monitor shows it in red.
+- The format of the table is not checked against a pool (item 6 above), and the test of it uses the
+  form from memory, so it can agree with the code and still be wrong.
+- Mutation testing found two tests that did not discriminate (a percentage that happened to be
+  exact, and a log long enough to need the tail but with the table in it); both were rewritten.
 
 ## What step 7 taught us
 

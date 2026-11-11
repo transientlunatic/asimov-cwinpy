@@ -4,6 +4,7 @@ import ast
 import configparser
 import os
 import sys
+import time
 import types
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -12,7 +13,13 @@ import pytest
 from asimov.pipeline import PipelineException
 
 from asimov_cwinpy.common import CwinpyError, TransientCwinpyError
-from asimov_cwinpy.heterodyne import ASSET, DAG_NAME, HeterodynePipeline
+from asimov_cwinpy.heterodyne import (
+    ASSET,
+    DAG_NAME,
+    HeterodynePipeline,
+    describe_progress,
+    parse_progress,
+)
 
 from .conftest import shard_blueprint
 
@@ -613,3 +620,180 @@ def test_the_outputs_are_listed_for_asimov(built):
 def test_the_log_to_report_is_the_dagman_log(built):
     dagman(built, 0, text="started\n")
     assert list(built.collect_logs()) == [DAG_NAME + ".dagman.out"]
+
+
+# Progress
+
+#: The table of counts as DAGMan writes it to its log, as it is believed to (from memory of
+#: HTCondor's logs: this has not been checked against a pool, see PLAN.md).
+TABLE = """\
+11/11/26 10:00:00 Of {total} nodes total:
+11/11/26 10:00:00  Done     Pre   Queued    Post   Ready   Un-Ready   Failed
+11/11/26 10:00:00   ===     ===      ===     ===     ===        ===      ===
+11/11/26 10:00:00 {done:>5}{pre:>8}{queued:>9}{post:>8}{ready:>8}{waiting:>11}{failed:>9}
+"""
+
+
+def table(total=2000, done=120, pre=0, queued=20, post=0, ready=1860, waiting=0, failed=0):
+    return TABLE.format(**locals())
+
+
+def test_the_counts_are_read_from_the_table_in_the_log():
+    assert parse_progress(table()) == {
+        "total": 2000,
+        "done": 120,
+        "pre": 0,
+        "queued": 20,
+        "post": 0,
+        "ready": 1860,
+        "waiting": 0,
+        "failed": 0,
+    }
+
+
+def test_every_column_is_its_own():
+    found = parse_progress(
+        table(total=28, done=1, pre=2, queued=3, post=4, ready=5, waiting=6, failed=7)
+    )
+    assert found == {
+        "total": 28,
+        "done": 1,
+        "pre": 2,
+        "queued": 3,
+        "post": 4,
+        "ready": 5,
+        "waiting": 6,
+        "failed": 7,
+    }
+
+
+def test_the_latest_table_is_the_one_that_counts():
+    text = table(done=1) + "11/11/26 10:01:00 other lines\n" * 3 + table(done=2) + "...\n"
+    assert parse_progress(text)["done"] == 2
+
+
+def test_the_total_is_the_one_before_the_table_that_is_used():
+    assert (
+        parse_progress(
+            table(total=10, done=5, queued=0, ready=5) + table(total=12, done=6, queued=0, ready=6)
+        )["total"]
+        == 12
+    )
+
+
+def test_without_the_total_the_nodes_are_added_up():
+    text = table().split("\n", 1)[1]
+    assert parse_progress(text)["total"] == 2000
+
+
+def test_a_log_without_a_table_has_no_progress():
+    assert parse_progress("") is None
+    assert parse_progress("11/11/26 10:00:00 Submitting node A\n") is None
+
+
+def test_a_table_cut_off_before_its_numbers_has_no_progress():
+    assert parse_progress(table().rsplit("\n", 2)[0] + "\n") is None
+    assert parse_progress(table()[: table().index("===")]) is None
+
+
+def test_other_lines_after_the_table_do_not_matter():
+    assert (
+        parse_progress(table() + "11/11/26 10:00:01 Submitting HTCondor Node x job(s)\n")["done"]
+        == 120
+    )
+
+
+def test_progress_is_described_for_the_monitor():
+    assert (
+        describe_progress(parse_progress(table()))
+        == "120 of 2000 jobs done (6%), 20 queued or running"
+    )
+
+
+def test_the_percentage_is_rounded_down_so_that_it_is_not_done_before_it_is():
+    assert "(6%)" in describe_progress(parse_progress(table(done=121)))
+    assert "(99%)" in describe_progress(
+        parse_progress(table(total=1000, done=999, ready=1, queued=0))
+    )
+
+
+def test_what_is_waiting_to_start_or_finish_counts_as_running():
+    line = describe_progress(parse_progress(table(pre=1, queued=2, post=3)))
+    assert "6 queued or running" in line
+
+
+def test_a_failure_is_in_the_description():
+    assert "3 failed" in describe_progress(parse_progress(table(failed=3)))
+    assert "failed" not in describe_progress(parse_progress(table()))
+
+
+def test_a_dag_with_no_nodes_has_a_description():
+    line = describe_progress(parse_progress(table(total=0, done=0, queued=0, ready=0)))
+    assert line.startswith("0 of 0 jobs done")
+
+
+def test_the_progress_of_a_dag_is_read_from_its_log(built):
+    assert built.dag_progress() is None  # DAGMan has not written
+    dagman(built, text="some log\n")
+    assert built.dag_progress() is None
+    dagman(built, text=table(done=7))
+    assert built.dag_progress()["done"] == 7
+
+
+def test_the_table_is_found_at_the_end_of_a_long_log(built):
+    dagman(built, text="x" * 500_000 + "\n" + table(done=9))
+    assert built.dag_progress()["done"] == 9
+
+
+def test_only_the_end_of_the_log_is_read_for_progress(built):
+    # (a table from long ago is not the state of the DAG now)
+    dagman(built, text=table(done=1) + "x" * 500_000 + "\n")
+    assert built.dag_progress() is None
+
+
+def test_while_running_says_how_far_it_has_got_and_keeps_it_in_the_ledger(built, capsys):
+    dagman(built, text=table(done=120, failed=2))
+    built.while_running()
+    said = capsys.readouterr().out
+    assert "120 of 2000 jobs done (6%)" in said and "2 failed" in said
+    kept = built.production.meta["progress"]
+    assert kept["done"] == 120 and kept["failed"] == 2 and kept["total"] == 2000
+    assert abs(kept["read"] - time.time()) < 60
+
+
+def test_while_running_keeps_the_latest_counts(built):
+    dagman(built, text=table(done=1))
+    built.while_running()
+    dagman(built, text=table(done=2))
+    built.while_running()
+    assert built.production.meta["progress"]["done"] == 2
+
+
+def test_while_running_before_dagman_has_said_anything_does_nothing(built, capsys):
+    built.while_running()
+    dagman(built, text="")
+    built.while_running()
+    assert capsys.readouterr().out == ""
+    assert "progress" not in built.production.meta
+
+
+def test_while_running_does_not_touch_the_outcome(built):
+    dagman(built, text=table(done=3))
+    built.while_running()
+    assert built.dag_outcome() is None
+    assert not built.detect_completion()
+
+
+def test_the_monitor_calls_it_for_a_dag_that_is_running(built, capsys):
+    from asimov.monitor_states import RunningState
+
+    dagman(built, text=table(done=40, total=100, ready=60, queued=0))
+    context = MagicMock()
+    context.analysis = built.production
+    context.job = {"status": 2}  # HTCondor's "running"
+    context.has_condor_job.return_value = True
+    assert RunningState().handle(context) is True
+    said = capsys.readouterr().out
+    assert "40 of 100 jobs done (40%)" in said
+    assert built.production.meta["progress"]["done"] == 40
+    context.update_ledger.assert_called()

@@ -128,6 +128,12 @@ tries again after a delay; any other failure is not transient. A DAG that has no
 left alone, and not treated as failed. Submitting a DAG a second time needs
 [etive-io/asimov#314](https://github.com/etive-io/asimov/issues/314).
 
+While the DAG runs, `asimov monitor` shows how far it has got, read from DAGMan's own log:
+`120 of 2000 jobs done (6%), 20 queued or running, 3 failed` (a job counts as failed when it has
+used up its retries). The counts are kept in the ledger as `progress`, with when they were read.
+It only reports: whether the shard is complete or has failed is decided as above. The format of
+DAGMan's table has not been checked on a pool; if it is not found nothing is shown.
+
 The result is the `heterodyned files` asset, `{pulsar: {detector: {factor: [path, ...]}}}`,
 for `cwinpy-merge`.
 
