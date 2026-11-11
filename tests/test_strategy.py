@@ -387,6 +387,77 @@ def load(text):
     return list(yaml.safe_load_all(text))
 
 
+class TestSummary:
+    def names(self, documents):
+        return [(d["kind"], d.get("event"), d["name"]) for d in documents]
+
+    def test_there_are_no_summary_pages_unless_asked_for(self, pars):
+        assert ("analysis", "O4a-heterodyne", "summary") not in self.names(expand(spec(pars)))
+        for off in (False, None):
+            assert ("analysis", "O4a-heterodyne", "summary") not in self.names(
+                expand(spec(pars, summary=off))
+            )
+
+    def test_true_asks_for_the_defaults(self, pars):
+        found = by_name(expand(spec(pars, summary=True)))
+        summary = found[("analysis", "O4a-heterodyne", "summary")]
+        assert summary["pipeline"] == "cwinpy-summary"
+        assert "cwinpy-summary" not in summary and "retry" not in summary
+
+    def test_it_needs_the_parameter_estimation_of_every_pulsar(self, pars):
+        summary = by_name(expand(spec(pars, summary=True)))[
+            ("analysis", "O4a-heterodyne", "summary")
+        ]
+        assert summary["needs"] == ["J0001+0001/pe", "J0002+0002/pe"]
+
+    def test_it_needs_those_of_the_pulsars_in_every_batch_in_order(self, pars):
+        pulsars = [
+            {"ephemeris": pars["J0003+0003"], "batch": "late"},
+            pars["J0002+0002"],
+            pars["J0001+0001"],
+        ]
+        summary = by_name(expand(spec(pars, pulsars=pulsars, summary=True)))[
+            ("analysis", "O4a-heterodyne", "summary")
+        ]
+        assert summary["needs"] == ["J0001+0001/pe", "J0002+0002/pe", "J0003+0003/pe"]
+
+    def test_it_is_the_last_document(self, pars):
+        assert expand(spec(pars, summary={}))[-1]["name"] == "summary"
+
+    def test_the_settings_go_where_the_pipeline_reads_them(self, pars):
+        asked = {
+            "settings": {"time series": False, "sort by": "F0"},
+            "scheduler": {"request memory": "8GB"},
+            "retry": {"attempts": 2},
+        }
+        summary = by_name(expand(spec(pars, summary=asked)))[
+            ("analysis", "O4a-heterodyne", "summary")
+        ]
+        assert summary["cwinpy-summary"] == {"time series": False, "sort by": "F0"}
+        assert summary["scheduler"] == {"request memory": "8GB"}
+        assert summary["retry"] == {"attempts": 2}
+
+    def test_nothing_else_changes(self, pars):
+        without = expand(spec(pars))
+        with_summary = expand(spec(pars, summary=True))
+        assert with_summary[:-1] == without
+
+    def test_an_option_that_it_does_not_have_is_refused(self, pars):
+        with pytest.raises(StrategyError, match="Unknown option.*'summary': data"):
+            RunStrategy().validate(spec(pars, summary={"data": {}}))
+
+    def test_it_is_a_mapping_or_a_flag(self, pars):
+        with pytest.raises(StrategyError, match="must be a mapping"):
+            RunStrategy().validate(spec(pars, summary=["x"]))
+        RunStrategy().validate(spec(pars, summary=True))
+        RunStrategy().validate(spec(pars, summary={"retry": {"attempts": 1}}))
+
+    def test_the_documents_name_nothing_twice_whatever_the_batch(self, pars):
+        pulsars = [pars["J0001+0001"], {"ephemeris": pars["J0003+0003"], "batch": "summary"}]
+        names = self.names(expand(spec(pars, pulsars=pulsars, summary=True)))
+        assert len(names) == len(set(names))
+
+
 # The blueprint, applied by asimov to a project
 
 BLUEPRINT = """\
@@ -524,3 +595,26 @@ class TestApplied:
         assert [(d.event.name, d.name) for d in pe.dependency_objects] == [
             ("O4a-heterodyne", "merge")
         ]
+
+
+class TestSummaryApplied:
+    def test_the_summary_is_made_and_its_needs_are_found(self, project, pars):
+        text = blueprint(pars, "J0001+0001", "J0002+0002", extra="  summary: true\n")
+        project.apply(text)
+        summary = analyses(project, "O4a-heterodyne")["summary"]
+        assert summary.pipeline.name == "cwinpy-summary"
+        assert sorted((d.event.name, d.name) for d in summary.dependency_objects) == [
+            ("J0001+0001", "pe"),
+            ("J0002+0002", "pe"),
+        ]
+
+    def test_it_is_not_made_without_being_asked(self, project, pars):
+        project.apply(blueprint(pars, "J0001+0001"))
+        assert "summary" not in analyses(project, "O4a-heterodyne")
+
+    def test_the_settings_arrive(self, project, pars):
+        extra = "  summary:\n    settings: {time series: false}\n    retry: {attempts: 2}\n"
+        project.apply(blueprint(pars, "J0001+0001", extra=extra))
+        meta = analyses(project, "O4a-heterodyne")["summary"].meta
+        assert meta["cwinpy-summary"] == {"time series": False}
+        assert meta["retry"] == {"attempts": 2}

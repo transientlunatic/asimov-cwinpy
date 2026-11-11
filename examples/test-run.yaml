@@ -59,3 +59,7 @@ strategy:
       request memory: 4096MB
       accounting group: ligo.dev.o4.cw.targeted.bayesian
     retry: {attempts: 2, delay: 60}
+  # The summary pages (one analysis, which needs both parameter estimations). It needs `cweqgen`.
+  # If the plots of the time series or the upper limits fail, add
+  #   settings: {time series: false, upper limit plot: false}
+  summary: true
