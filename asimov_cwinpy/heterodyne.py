@@ -36,6 +36,7 @@ from asimov import config
 from asimov.pipeline import PipelineException
 from asimov.utils import set_directory
 
+from . import coverage
 from .common import CwinpyError, CwinpyPipeline, TransientCwinpyError
 
 #: The name cwinpy gives the DAG it writes.
@@ -142,6 +143,10 @@ class HeterodynePipeline(CwinpyPipeline):
     log_patterns = ["submit/*.dagman.out"]
 
     #: Ledger keys that the configuration needs and that have no safe default.
+    #: The per-chunk files are intermediates: once the merge has used them they may be released
+    #: (``asimov analysis prune``).
+    output_retention = {ASSET: "until_consumed"}
+
     REQUIRED_META = (
         ("interferometers",),
         ("cwinpy-heterodyne", "data start"),
@@ -343,6 +348,7 @@ class HeterodynePipeline(CwinpyPipeline):
                 f"The ledger does not set {', '.join(missing)} for this analysis.",
                 production=self.production.name,
             )
+        self.minimum_coverage()
         absent = [path for path in self.ephemerides() if not os.path.isfile(path)]
         if absent:
             raise PipelineException(
@@ -598,9 +604,138 @@ class HeterodynePipeline(CwinpyPipeline):
         self.production.meta["progress"] = {**progress, "read": int(time.time())}
         click.echo("  \t  " + click.style("●", "green") + " " + describe_progress(progress))
 
+    # How much of the science data was heterodyned
+
+    def minimum_coverage(self):
+        """
+        The fraction of the science time that has to be heterodyned, or None for no check.
+
+        Raises
+        ------
+        PipelineException
+            If it is not a number above 0 and at most 1.
+        """
+        value = self.settings().get("minimum coverage")
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 1:
+            raise PipelineException(
+                f"`minimum coverage` must be a fraction above 0 and at most 1, not {value!r}.",
+                production=self.production.name,
+            )
+        return float(value)
+
+    def science_segments(self, detector):
+        """
+        The segments that the data of a detector was meant to come from, in the span of the shard.
+
+        Returns
+        -------
+        list of (float, float) or None
+            None if there is no list of them to be found (for the first time a DAG is made
+            from a flag, before it has been made).
+        """
+        start, end = self.times()
+        if self.from_caches():
+            paths = [self.per_detector("segment lists", self.settings())[detector]]
+        else:
+            directory = os.path.join(self.production.rundir, "segments")
+            marker = f"_{detector}_"
+            try:
+                paths = [
+                    os.path.join(directory, name)
+                    for name in sorted(os.listdir(directory))
+                    if name.endswith(".txt") and marker in name
+                ]
+            except OSError:
+                return None
+        if not paths:
+            return None
+        found = []
+        for path in paths:
+            try:
+                found.extend(coverage.read_segments(path))
+            except OSError as error:
+                self.logger.warning(f"The segments of {detector} cannot be read: {error}")
+                return None
+        return coverage.clip(found, start, end)
+
+    def heterodyned_files(self, detector):
+        """The output files of one pulsar and frequency factor for a detector."""
+        records = sorted(
+            (r for r in (self.manifest() or {}).get("outputs", []) if r["detector"] == detector),
+            key=lambda r: (r["factor"], r["pulsar"]),
+        )
+        return records[0]["files"] if records else []
+
+    def coverage(self):
+        """
+        How much of the science time of each detector was heterodyned.
+
+        Every pulsar has the same data, so one pulsar's files are measured, for one frequency
+        factor.
+
+        Returns
+        -------
+        dict or None
+            ``{detector: {"science": s, "heterodyned": s, "fraction": f}}`` (seconds) for each
+            detector that has science time and that can be measured, or None if there is none.
+        """
+        found = {}
+        for detector in self.detectors():
+            science = self.science_segments(detector)
+            total = coverage.seconds(science) if science else 0
+            files = self.heterodyned_files(detector)
+            if not total or not files:
+                continue
+            done = coverage.heterodyned_seconds(files)
+            if done is None:
+                continue
+            found[detector] = {
+                "science": total,
+                "heterodyned": done,
+                "fraction": done / total,
+            }
+        return found or None
+
+    def low_coverage(self):
+        """
+        The detectors that have less than ``minimum coverage``.
+
+        Returns
+        -------
+        dict
+            ``{detector: fraction}``. Empty if there is no minimum, or the coverage cannot
+            be measured: a check that cannot be made is not a failure.
+        """
+        minimum = self.minimum_coverage()
+        if minimum is None:
+            return {}
+        found = self.coverage() or {}
+        return {d: c["fraction"] for d, c in found.items() if c["fraction"] < minimum}
+
+    def after_completion(self):
+        """Keep how much was heterodyned in the ledger (``coverage``), and finish."""
+        try:
+            found = self.coverage()
+        except Exception as error:  # knowing it is not worth failing a finished shard
+            self.logger.warning(f"The coverage could not be measured: {error}")
+            found = None
+        if found:
+            self.production.meta["coverage"] = {
+                d: {k: (round(v, 4) if k == "fraction" else int(v)) for k, v in c.items()}
+                for d, c in found.items()
+            }
+            self.logger.info(
+                "Coverage: "
+                + ", ".join(f"{d} {c['fraction']:.1%}" for d, c in sorted(found.items()))
+            )
+        super().after_completion()
+
     def detect_completion(self):
         """
-        Whether the DAG succeeded and every output has data in it.
+        Whether the DAG succeeded, every output has data in it, and (if ``minimum coverage``
+        is set) enough of the science time was heterodyned.
 
         Not whether the files exist: cwinpy makes an empty one for each when it builds the
         DAG. Nothing is read until DAGMan says it has succeeded, so this is cheap to ask
@@ -608,7 +743,11 @@ class HeterodynePipeline(CwinpyPipeline):
         """
         if not self.production.rundir or self.manifest() is None:
             return False
-        return self.dag_outcome() == "succeeded" and not self.incomplete_outputs()
+        return (
+            self.dag_outcome() == "succeeded"
+            and not self.incomplete_outputs()
+            and not self.low_coverage()
+        )
 
     def failed_nodes(self):
         """
@@ -644,7 +783,8 @@ class HeterodynePipeline(CwinpyPipeline):
 
         That is not always a failure: the list of jobs that asimov has may be out of date.
         So this raises only when DAGMan says the DAG ended badly, or ended well with outputs
-        that are empty; and otherwise leaves it alone and is asked again.
+        that are empty or too little of the science time covered; and otherwise leaves it
+        alone and is asked again.
 
         A failure in which jobs could not read frame files is transient: a disk or a machine
         comes back, and asimov's retry policy decides how many times, and how long after, to
@@ -655,7 +795,8 @@ class HeterodynePipeline(CwinpyPipeline):
         TransientCwinpyError
             If jobs could not read frame files.
         CwinpyError
-            If the DAG failed for another reason, or succeeded with empty outputs.
+            If the DAG failed for another reason, or succeeded with empty outputs or less
+            than ``minimum coverage``.
         """
         outcome = self.dag_outcome()
         if outcome == "failed":
@@ -678,6 +819,16 @@ class HeterodynePipeline(CwinpyPipeline):
                     f"The DAG of {self.production.name} succeeded but {len(incomplete)} of its "
                     f"outputs are missing or empty, for example {incomplete[0]}. Data was not "
                     f"read: check that `strict data requirement` is not false.",
+                    production=self.production.name,
+                )
+            low = self.low_coverage()
+            if low:
+                detail = ", ".join(f"{d} {f:.1%}" for d, f in sorted(low.items()))
+                raise CwinpyError(
+                    f"The DAG of {self.production.name} succeeded but heterodyned less of the "
+                    f"science time than `minimum coverage` ({self.minimum_coverage():.1%}): "
+                    f"{detail}. Data was left out; check the logs in "
+                    f"{os.path.join(self.production.rundir, 'log')}.",
                     production=self.production.name,
                 )
             return

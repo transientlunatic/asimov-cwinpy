@@ -149,6 +149,40 @@ def test_a_shard_that_is_not_complete_is_an_error_and_not_a_gap_in_the_data(proj
         make(project).items()
 
 
+def release(project, shard, asset="heterodyned files"):
+    """As ``asimov analysis prune`` records it, when the files of a shard have been removed."""
+    ledger = project.open()
+    event = ledger.get_event("O4a-heterodyne")[0]
+    analysis = [a for a in event.productions if a.name == shard][0]
+    analysis.meta["released"] = [
+        {"asset": asset, "released": "2026-11-11", "size": 4200000, "paths": []}
+    ]
+    ledger.update_event(event)
+    ledger.save()
+
+
+def test_a_shard_whose_files_were_released_says_so_and_how_to_merge_again(project, provided):
+    make(project)
+    del provided["shard-0002"]  # (its files are gone)
+    release(project, "shard-0002")
+    pipeline = project.analysis("O4a-heterodyne", "merge").pipeline
+    with pytest.raises(
+        PipelineException, match=r"shard-0002 were released to save space.*4\.2 MB"
+    ) as e:
+        pipeline.items()
+    assert "run the shard again" in str(e.value)
+    assert "not complete" not in str(e.value)
+
+
+def test_a_release_of_something_else_does_not_change_the_message(project, provided):
+    make(project)
+    del provided["shard-0002"]
+    release(project, "shard-0002", asset="something else")
+    pipeline = project.analysis("O4a-heterodyne", "merge").pipeline
+    with pytest.raises(PipelineException, match="shard-0002 has no heterodyned files"):
+        pipeline.items()
+
+
 def test_a_shard_that_was_given_up_on_is_left_out(project, provided):
     pipeline = make(project)
     project.set_status("O4a-heterodyne", "shard-0002", "skipped")

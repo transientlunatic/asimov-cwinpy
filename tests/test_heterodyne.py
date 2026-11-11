@@ -797,3 +797,213 @@ def test_the_monitor_calls_it_for_a_dag_that_is_running(built, capsys):
     assert "40 of 100 jobs done (40%)" in said
     assert built.production.meta["progress"]["done"] == 40
     context.update_ledger.assert_called()
+
+
+# Coverage
+
+SHARD = (1000000000, 1000002048)  # the span of the shard in the blueprint
+
+
+def cover(pipeline, tmp_path, science, heterodyned, minimum=None):
+    """
+    Give a built shard science segments, and outputs that hold data with their own segments.
+
+    ``science`` and ``heterodyned`` are ``{detector: segments}``.
+    """
+    h5py = pytest.importorskip("h5py")
+    settings = pipeline.production.meta["cwinpy-heterodyne"]
+    lists = {}
+    for detector, segments in science.items():
+        path = tmp_path / f"science_{detector}.txt"
+        path.write_text("".join(f"{a} {b}\n" for a, b in segments))
+        lists[detector] = str(path)
+    settings["segment lists"] = lists
+    if minimum is not None:
+        settings["minimum coverage"] = minimum
+    for record in pipeline.manifest()["outputs"]:
+        for path in record["files"]:
+            with h5py.File(path, "w") as handle:
+                handle.create_dataset(
+                    "HeterodynedDataTimeSegments", data=heterodyned[record["detector"]]
+                )
+    dagman(pipeline, 0)
+
+
+FULL = [(SHARD[0], SHARD[1])]
+
+
+def test_a_shard_with_all_its_science_time_heterodyned_is_complete(built, tmp_path):
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": FULL, "L1": FULL}, minimum=0.9)
+    assert built.detect_completion()
+    built.resurrect()  # does not raise
+
+
+def test_a_detector_with_too_little_is_not_complete_and_says_which(built, tmp_path):
+    ignored = [(SHARD[0], SHARD[0] + 1000)]  # 1000 of 2048 s
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": FULL, "L1": ignored}, minimum=0.9)
+    assert not built.detect_completion()
+    assert list(built.low_coverage()) == ["L1"]
+    with pytest.raises(CwinpyError, match=r"minimum coverage.*90.0%.*L1 48.8%") as error:
+        built.resurrect()
+    assert "H1" not in str(error.value).split("L1")[0].split(":")[-1]
+    assert not isinstance(error.value, TransientCwinpyError)
+    assert error.value.transient is False
+
+
+def test_both_detectors_are_named_when_both_are_low(built, tmp_path):
+    half = [(SHARD[0], SHARD[0] + 1024)]
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": half, "L1": half}, minimum=0.9)
+    with pytest.raises(CwinpyError, match=r"H1 50.0%, L1 50.0%"):
+        built.resurrect()
+
+
+def test_exactly_the_minimum_is_enough(built, tmp_path):
+    half = [(SHARD[0], SHARD[0] + 1024)]
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": half, "L1": half}, minimum=0.5)
+    assert built.detect_completion()
+
+
+def test_without_a_minimum_nothing_is_checked(built, tmp_path):
+    tiny = [(SHARD[0], SHARD[0] + 10)]
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": tiny, "L1": tiny})
+    assert built.detect_completion()
+    assert built.low_coverage() == {}
+
+
+def test_science_time_is_only_that_inside_the_span_of_the_shard(built, tmp_path):
+    wide = [(SHARD[0] - 5000, SHARD[1] + 5000)]  # the flag is up for much longer
+    cover(built, tmp_path, {"H1": wide, "L1": wide}, {"H1": FULL, "L1": FULL}, minimum=0.99)
+    assert built.detect_completion()
+    assert built.coverage()["H1"]["science"] == SHARD[1] - SHARD[0]
+
+
+def test_a_gap_in_the_science_time_is_not_data_that_was_ignored(built, tmp_path):
+    science = [(SHARD[0], SHARD[0] + 1000), (SHARD[0] + 1500, SHARD[1])]
+    heterodyned = [(SHARD[0] + 10, SHARD[0] + 1000), (SHARD[0] + 1500, SHARD[1] - 10)]
+    cover(
+        built,
+        tmp_path,
+        {"H1": science, "L1": science},
+        {"H1": heterodyned, "L1": heterodyned},
+        minimum=0.95,
+    )
+    assert built.detect_completion()
+    assert built.coverage()["H1"]["science"] == 1548
+
+
+def test_a_detector_with_no_science_time_is_left_out(built, tmp_path):
+    cover(built, tmp_path, {"H1": FULL, "L1": []}, {"H1": FULL, "L1": FULL}, minimum=0.9)
+    assert sorted(built.coverage()) == ["H1"]
+    assert built.detect_completion()
+
+
+def test_the_coverage_cannot_be_measured_without_the_segments_so_it_is_not_checked(built, tmp_path):
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": [(0, 1)], "L1": [(0, 1)]}, minimum=0.9)
+    built.production.meta["cwinpy-heterodyne"]["segment lists"] = {
+        "H1": str(tmp_path / "gone.txt"),
+        "L1": str(tmp_path / "gone.txt"),
+    }
+    assert built.coverage() is None
+    assert built.detect_completion()
+
+
+def test_an_output_that_does_not_say_what_it_covers_is_not_checked(built, tmp_path):
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": FULL, "L1": FULL}, minimum=0.9)
+    for path in built.expected_files():
+        open(path, "w").write("data")  # not an HDF5 file
+    assert built.coverage() is None
+    assert built.detect_completion()
+
+
+def test_what_is_measured_is_one_pulsars_files_for_one_factor(built, tmp_path):
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": FULL, "L1": FULL}, minimum=0.9)
+    factor_two = [r for r in built.manifest()["outputs"] if r["factor"] == 2]
+    for record in factor_two:  # the other factor's files are not what is measured
+        for path in record["files"]:
+            open(path, "w").write("data")
+    assert built.coverage()["H1"]["fraction"] == 1.0
+    assert built.detect_completion()
+
+
+def test_low_coverage_is_not_asked_before_the_dag_has_succeeded(built, tmp_path):
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": [(0, 1)], "L1": [(0, 1)]}, minimum=0.9)
+    dagman(built)  # DAGMan has not finished
+    assert not built.detect_completion()
+    built.resurrect()  # nothing says that it failed
+    dagman(built, 1)
+    with pytest.raises(CwinpyError, match="ended with failed jobs"):
+        built.resurrect()
+
+
+def test_empty_outputs_are_still_an_error_before_coverage_is_asked(built, tmp_path):
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": FULL, "L1": FULL}, minimum=0.9)
+    open(built.expected_files()[0], "w").close()
+    with pytest.raises(CwinpyError, match="missing or empty"):
+        built.resurrect()
+
+
+def test_the_science_segments_of_a_flag_are_the_files_that_cwinpy_wrote(project, tmp_path):
+    pipeline = make(project, cache=False)
+    directory = os.path.join(pipeline.production.rundir, "segments")
+    os.makedirs(directory)
+    for name, text in {
+        "segments_1000000000-1000002048_H1_DMT-ANALYSIS_READY_1.txt": "1000000000 1000001000\n",
+        "segments_1000000000-1000002048_L1_DMT-ANALYSIS_READY_1.txt": "1000000500 1000002048\n",
+    }.items():
+        with open(os.path.join(directory, name), "w") as handle:
+            handle.write(text)
+    assert pipeline.science_segments("H1") == [(1000000000, 1000001000)]
+    assert pipeline.science_segments("L1") == [(1000000500, 1000002048)]
+
+
+def test_the_segments_of_a_flag_are_not_there_before_the_dag_is_made(project):
+    assert make(project, cache=False).science_segments("H1") is None
+
+
+def test_a_detector_that_has_no_segment_file_is_not_measured_in_flag_mode(project, tmp_path):
+    pipeline = make(project, cache=False)
+    directory = os.path.join(pipeline.production.rundir, "segments")
+    os.makedirs(directory)
+    open(os.path.join(directory, "segments_1-2_H1_FLAG.txt"), "w").write("1000000000 1000001000\n")
+    assert pipeline.science_segments("L1") is None
+    assert pipeline.science_segments("H1") is not None
+
+
+@pytest.mark.parametrize("value", [0, -0.5, 1.5, "most", True, [0.9]])
+def test_a_minimum_that_is_not_a_fraction_is_refused(project, value):
+    pipeline = make(project)
+    pipeline.production.meta["cwinpy-heterodyne"]["minimum coverage"] = value
+    with pytest.raises(PipelineException, match="minimum coverage"):
+        pipeline.before_config()
+
+
+@pytest.mark.parametrize("value", [1, 1.0, 0.9, 0.01, None])
+def test_a_minimum_that_is_a_fraction_is_accepted(project, tmp_path, value):
+    pipeline = configured(project, tmp_path)
+    if value is not None:
+        pipeline.production.meta["cwinpy-heterodyne"]["minimum coverage"] = value
+    pipeline.before_config()
+
+
+def test_the_coverage_is_kept_in_the_ledger_when_the_shard_finishes(built, tmp_path):
+    ignored = [(SHARD[0], SHARD[0] + 1024)]
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": FULL, "L1": ignored})  # no minimum
+    built.after_completion()
+    kept = built.production.meta["coverage"]
+    assert kept["H1"] == {"science": 2048, "heterodyned": 2048, "fraction": 1.0}
+    assert kept["L1"] == {"science": 2048, "heterodyned": 1024, "fraction": 0.5}
+    assert str(built.production.status).lower() == "finished"
+
+
+def test_a_shard_finishes_even_if_the_coverage_cannot_be_measured(built, tmp_path):
+    cover(built, tmp_path, {"H1": FULL, "L1": FULL}, {"H1": FULL, "L1": FULL})
+    for path in built.expected_files():
+        open(path, "w").write("data")
+    built.after_completion()
+    assert "coverage" not in built.production.meta
+    assert str(built.production.status).lower() == "finished"
+
+
+def test_the_per_chunk_files_may_be_released_once_the_merge_has_used_them():
+    assert HeterodynePipeline.output_retention == {ASSET: "until_consumed"}
+    assert HeterodynePipeline.output_retention[ASSET] == "until_consumed"

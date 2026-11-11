@@ -152,7 +152,13 @@ def test_two_shards_are_merged_and_the_merge_is_analysed(
         project.set_status("O4a-heterodyne", name, "running")
     asimov(project, "monitor")
     for name in SHARDS:
-        assert project.analysis("O4a-heterodyne", name).status == "finished"
+        shard = project.analysis("O4a-heterodyne", name)
+        assert shard.status == "finished"
+        # What cwinpy heterodyned of the science time is measured from its own files: a job
+        # of 2048 s loses the start and end of its data (about 90 s at each end)
+        for detector, found in shard.meta["coverage"].items():
+            assert found["science"] == 2048, (detector, found)
+            assert 0.85 < found["fraction"] < 0.95, (detector, found)
 
     # The merge: now that its shards are finished it can be built and run
     asimov(project, "manage", "build")
@@ -177,3 +183,23 @@ def test_two_shards_are_merged_and_the_merge_is_analysed(
     posterior = bilby.result.read_in_result(result)
     assert sorted(posterior.search_parameter_keys) == ["h0", "iota", "phi0", "psi"]
     assert len(posterior.posterior) > 10
+
+    # Everything is finished: the per-chunk files, which the merge has used, may be released,
+    # and what the parameter estimation reads and made is not
+    merged_files = [path for by_factor in merged.values() for path in by_factor.values()]
+    chunks = [
+        path
+        for name in SHARDS
+        for path in project.analysis("O4a-heterodyne", name).pipeline.expected_files()
+    ]
+    assert all(os.path.getsize(path) > 0 for path in chunks)
+    output = asimov(project, "analysis", "prune", "--yes")
+    assert "Released" in output, output
+    assert not any(os.path.exists(path) for path in chunks)
+    assert all(os.path.getsize(path) > 0 for path in merged_files)
+    assert os.path.exists(result)
+    asimov(project, "monitor")  # nothing is disturbed by the files being gone
+    for name in SHARDS:
+        assert project.analysis("O4a-heterodyne", name).status == "finished"
+    assert project.analysis("O4a-heterodyne", "merge").status == "finished"
+    assert project.analysis("J0534+2200", "pe").status == "finished"

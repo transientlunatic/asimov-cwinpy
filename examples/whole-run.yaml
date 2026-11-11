@@ -32,6 +32,9 @@ strategy:
       datafind url type: osdf
     settings:                # what is under `cwinpy-heterodyne:` in a shard
       strict data requirement: true
+      # The shard is not complete if less than this fraction of the science time was heterodyned.
+      # A job of a day loses a fraction of a percent at its ends; a short job loses more.
+      minimum coverage: 0.95
     scheduler:
       request memory: 16384MB
       request disk: 40GB
