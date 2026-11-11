@@ -40,6 +40,14 @@ terms:
           ignores data it cannot read and the job can succeed with no output, so
           data is lost without a failure. Defaults to true here (cwinpy's own
           default is false).
+      minimum coverage:
+        type: float
+        description: >-
+          The fraction of the science time of the shard (above 0, at most 1) that has to be
+          heterodyned for the shard to be complete. Data that cwinpy ignored then fails the shard
+          instead of passing unnoticed. The heterodyne loses a little at the ends of each stretch of
+          data, so a short job needs a lower value than a long one. Not checked if not set, or if the
+          science time is not known.
       segment lists:
         type: string
         per ifo: true

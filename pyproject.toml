@@ -31,6 +31,8 @@ dependencies = [
     # analysis types (#302) and the rescue fixes (#298), which is the release
     # after 0.8. CI installs asimov from its main branch until then.
     "asimov>=0.8.0",
+    # Reads the time segments that cwinpy's output files record, to say how much was heterodyned.
+    "h5py",
     # cwinpy itself is not a dependency: it is expected to be in the environment
     # that jobs run in, as for the other asimov plugins.
 ]

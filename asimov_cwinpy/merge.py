@@ -18,7 +18,7 @@ import os
 import re
 import sys
 
-from asimov import config
+from asimov import config, retention
 from asimov.pipeline import PipelineException
 from asimov.scheduler_utils import create_job_from_dict
 from asimov.utils import set_directory
@@ -91,6 +91,13 @@ class MergePipeline(CwinpyPipeline):
                 continue
             files = (dependency.pipeline.collect_assets() or {}).get(SHARD_ASSET)
             name = self.production._qualified_name(dependency)
+            if not files and SHARD_ASSET in retention.released_names(dependency):
+                raise PipelineException(
+                    f"The heterodyned files of the shard {name} were released to save space "
+                    f"({retention.released_when(dependency, SHARD_ASSET)}), after a merge had used "
+                    f"them. To merge again, run the shard again.",
+                    production=self.production.name,
+                )
             if not files:
                 raise PipelineException(
                     f"The shard {name} has no heterodyned files: it is not complete.",

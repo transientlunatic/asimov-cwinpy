@@ -141,9 +141,9 @@ The retry policy's keys were not in the ledger vocabulary at first, so
    the files to expect, submits it (and submits it again to resume it), recognises completion, and
    classifies failures. Tested with the real runner and the real `cwinpy_heterodyne` jobs on fake
    frames; no HTCondor.
-5. Failure handling, the rest: ~~progress reporting from DAGMan's logs~~ (done: `while_running` of
-   `cwinpy-heterodyne`), the coverage threshold, and output retention. (Classification of
-   failures is done, in step 4.)
+5. ~~Failure handling, the rest~~ (done): progress reporting from DAGMan's logs (`while_running` of
+   `cwinpy-heterodyne`), `minimum coverage`, and `until_consumed` retention of the per-chunk files.
+   (Classification of failures was done in step 4.)
 6. ~~Merge pipeline~~ (done): `cwinpy-merge` plans the merges from the shards' files, runs them
    as one job that checks every input first, and provides the merged files for `cwinpy-pe`.
    Tested with the real cwinpy through the whole chain (shards, merge, parameter estimation).
@@ -234,6 +234,30 @@ Found by running cwinpy, not from its documentation:
   database ledger, which is the default, is fine, and the chain test uses it.
 - The three pipelines fit together: what `cwinpy-heterodyne` provides is what `cwinpy-merge`
   reads, and what that provides is what `cwinpy-pe` reads, checked on real data.
+
+## What the coverage check and retention taught us
+
+- **Coverage is measured, not assumed.** Every output file records the segments of its data, and
+  cwinpy writes the segment files it used into `<rundir>/segments` when it makes the DAG from a
+  flag ("rather than relying on each job doing it"), so both modes have a science time to compare
+  with. On the fake frames a 2048 s job heterodynes 1860 s of 2048 s: the first and last ~90 s are
+  lost. A threshold has to allow for that, hence it is a per-analysis setting that is off unless set.
+- **A merge is not checked.** It joins what the shards made, and checks that every input is there;
+  what was left out is already a fact about the shards.
+- **Retention needed one new message, not new behaviour.** Core's `prune` only releases what a
+  finished consumer has used and only when asked. After a release a shard's `collect_assets` is empty
+  (its files are gone), so a merge that is run again used to say "the shard is not complete"; it now
+  says that the files were released, when, and that the shard has to be run again.
+- Checked on real data: both chain tests now read the coverage of real shards (0.85 to 0.95), run
+  `asimov analysis prune`, find the chunk files gone and the merged files, the posterior and the
+  statuses untouched, and `asimov monitor` undisturbed.
+- Mutation testing found two pieces of redundant code (a guard that `coverage()` already made, and a
+  comment check the number pattern already made), which were removed.
+
+**Not verified, for Matt:** (7) that in flag mode cwinpy's segment files are named
+`segments_<start>-<end>_<flag>.txt` with the flag's `:` as `_`, so that `_H1_` finds a detector's (this is
+read from cwinpy's code, not seen); (8) that a day of data with no science segments has no job and
+no expected output, rather than an empty file, which would stop a shard from completing.
 
 ## What progress reporting taught us
 

@@ -110,6 +110,7 @@ explicit dictionary for each detector.
 | `data: cache files`, `cwinpy-heterodyne: segment lists` | `framecaches`, `segmentlists`: data in frame caches, with no server |
 | `cwinpy-heterodyne: joblength` | `joblength`: seconds of data per job |
 | `cwinpy-heterodyne: strict data requirement` (default **true**) | `strictdatarequirement` |
+| `cwinpy-heterodyne: minimum coverage` (optional) | not cwinpy's: the fraction of the science time that has to be heterodyned |
 | `scheduler: request memory`, `request disk`, `request cpus`, `accounting group` | the resources of the jobs |
 
 `strict data requirement` is true here, and cwinpy's own default is false. With false, a job
@@ -127,6 +128,24 @@ files make a *transient* failure, which asimov's retry policy (`retry:` in the b
 tries again after a delay; any other failure is not transient. A DAG that has not ended is
 left alone, and not treated as failed. Submitting a DAG a second time needs
 [etive-io/asimov#314](https://github.com/etive-io/asimov/issues/314).
+
+**Coverage.** When a shard finishes, the share of its science time that was heterodyned is
+measured for each detector and kept in the ledger as `coverage` (`science` and `heterodyned` in
+seconds, and the `fraction`). *Heterodyned* is the time of the segments that cwinpy records in its
+output files; *science time* is that of the segments the data was meant to come from, inside the
+span of the shard: the `segment lists` files, or, when the data is found from a flag, the files that
+cwinpy writes to `<rundir>/segments` when it makes the DAG. With `minimum coverage` set, a shard that
+heterodyned less than that is not complete: the failure (not transient) is handed to the `retry`
+policy like any other. If the science time cannot be found or an output cannot be read, nothing is
+checked, and a warning says so. The heterodyne loses a little at the ends of each stretch of data (about
+90 s each in a 2048 s test job, so 0.91 there), so a short job needs a lower minimum than a long one.
+One pulsar's files, for one frequency factor, are measured, as every pulsar has the same data.
+
+**Releasing the per-chunk files.** The shard's `heterodyned files` are marked `until_consumed`, so
+`asimov analysis prune` can remove them once `cwinpy-merge` (and anything else that needs the shard) has
+finished, which for a run of 200 pulsars is most of what it writes. They are only removed when you ask,
+and the merged files, and the results of the parameter estimations, are never touched. Merging again
+after that needs the shard to be run again (asimov says so).
 
 While the DAG runs, `asimov monitor` shows how far it has got, read from DAGMan's own log:
 `120 of 2000 jobs done (6%), 20 queued or running, 3 failed` (a job counts as failed when it has
