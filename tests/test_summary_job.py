@@ -31,10 +31,17 @@ class FakeGenerator:
                 handle.write("<html>")
 
 
+@pytest.fixture(autouse=True)
+def pkg_resources_installed(monkeypatch):
+    """
+    Whether the environment has pkg_resources (setuptools 82 and later do not) is not what most of
+    these tests are about, so they all have it; the ones that are about it take it away.
+    """
+    monkeypatch.setitem(sys.modules, "pkg_resources", types.ModuleType("pkg_resources"))
+
+
 @pytest.fixture
 def generator(monkeypatch):
-    # (whether pkg_resources is installed is not what these tests are about)
-    monkeypatch.setitem(sys.modules, "pkg_resources", types.ModuleType("pkg_resources"))
     fake = FakeGenerator()
     module = types.ModuleType("cwinpy.pe.summary")
     module.generate_summary_pages = fake
