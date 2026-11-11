@@ -78,6 +78,28 @@ parameter estimation needs the merge of its batch. The strategy counts about
 `shards x batches + pulsars + batches` analyses; asimov refuses a group of more than
 `[strategy] max_group_analyses` (500 unless set).
 
+### Trying it at a smaller scale
+
+How long a run takes is set by reading the frames and by the parameter estimations, and neither
+has been timed on a pool yet, so the sizes below are in what they read and run, not in hours.
+
+| To test | Use | What it reads and runs |
+|---|---|---|
+| The code, with no pool | `pytest tests/test_chain_cwinpy.py` (needs cwinpy) | fake frames, 2 shards, a merge, a PE: about 1.5 minutes |
+| The parameter estimation alone, on a pool | [`examples/pulsar-simulated.yaml`](examples/pulsar-simulated.yaml) | no data at all: simulated noise |
+| The whole chain, small | [`examples/test-run.yaml`](examples/test-run.yaml) | one day of data, two pulsars, one frequency factor, 6-hour jobs: 8 heterodyne jobs, 1 merge, 2 PEs |
+| A whole run | [`examples/whole-run.yaml`](examples/whole-run.yaml) | the span of the run: days x detectors x factors heterodyne jobs, and a PE for each pulsar |
+
+To make a run smaller, change the blueprint and nothing else: a shorter `data start` to `data end`
+(the frame reading is the same however it is divided), fewer `pulsars` (each adds a PE, and a little
+to every heterodyne job), `frequency factors: [2]`, a lower `nlive` in `pe: sampler: sampler kwargs`,
+and a short `retry: {delay: 60}` so that the retry policy can be seen working.
+
+Asimov itself is not the limit at the full size. A blueprint of 200 pulsars in 40 shards, made into
+233 analyses in 201 subjects, took 7 s to apply, 9 s for `asimov monitor` and 11 s for `asimov manage
+build`, on a scratch project (a ledger of 1.2 MB); that is under the default limit of 500 analyses
+in a group. That says nothing of how long the jobs take.
+
 See [`examples/`](examples) for blueprints, and check them with:
 
 ```bash
