@@ -73,6 +73,28 @@ def blueprint(frames):
     return text
 
 
+def strategy_blueprint(frames):
+    """The same run, as the one blueprint that the ``cwinpy-run`` strategy expands."""
+    root = frames["root"]
+    caches = frames["caches"]
+    (start, _), (_, end) = SHARDS["shard-0001"], SHARDS["shard-0002"]
+    return (
+        "kind: analysis\nname: O4a\nstrategy:\n  type: cwinpy-run\n"
+        f"  run: O4a-heterodyne\n  interferometers: [H1, L1]\n  data start: {start}\n"
+        f"  data end: {end}\n  joblength: 2048\n  shards: {{count: 2}}\n"
+        f"  pulsars: [{root / 'J0534+2200.par'}]\n  heterodyne:\n    data:\n"
+        "      channels: {H1: 'H1:FAKE-STRAIN', L1: 'L1:FAKE-STRAIN'}\n"
+        f"      cache files: {{H1: {caches['H1']}, L1: {caches['L1']}}}\n"
+        f"    settings:\n      segment lists: {{H1: {root / 'segments_H1.txt'}, "
+        f"L1: {root / 'segments_L1.txt'}}}\n"
+        "  pe:\n    priors:\n      h0: {type: uniform, minimum: 0.0, maximum: 1.0e-22}\n"
+        "      phi0: {type: uniform, minimum: 0.0, maximum: 3.141592653589793}\n"
+        "      iota: {type: sine, minimum: 0.0, maximum: 3.141592653589793}\n"
+        "      psi: {type: uniform, minimum: 0.0, maximum: 1.5707963267948966}\n"
+        "    sampler: {sampler: dynesty, sampler kwargs: {nlive: 100, dlogz: 1.0}}\n"
+    )
+
+
 def asimov(project, *arguments):
     env = dict(os.environ, PATH=f"{BIN}{os.pathsep}{os.environ['PATH']}")
     done = subprocess.run(
@@ -99,8 +121,9 @@ def wait_for(project, subject, name, seconds=240):
     pytest.fail(f"{subject}/{name} is {project.analysis(subject, name).status}, not finished")
 
 
+@pytest.mark.parametrize("source", ["explicit", "strategy"])
 def test_two_shards_are_merged_and_the_merge_is_analysed(
-    database_project, monkeypatch, frames, tmp_path
+    database_project, monkeypatch, frames, tmp_path, source
 ):
     project = database_project
     # The project runs jobs itself, with the cwinpy of this environment.
@@ -113,7 +136,7 @@ def test_two_shards_are_merged_and_the_merge_is_analysed(
         settings.write(handle)
     monkeypatch.setenv("PATH", f"{BIN}{os.pathsep}{os.environ['PATH']}")
 
-    project.apply(blueprint(frames))
+    project.apply((blueprint if source == "explicit" else strategy_blueprint)(frames))
     asimov(project, "manage", "build")  # builds the shards: nothing else is ready
 
     # The shards: DAGs, which HTCondor would run

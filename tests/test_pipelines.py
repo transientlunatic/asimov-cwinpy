@@ -12,7 +12,6 @@ from asimov_cwinpy.common import CwinpyError, TransientCwinpyError
 from asimov_cwinpy.heterodyne import HeterodynePipeline
 from asimov_cwinpy.merge import MergePipeline
 from asimov_cwinpy.pe import PEPipeline
-from asimov_cwinpy.strategy import RunStrategy
 
 PIPELINES = [HeterodynePipeline, MergePipeline, PEPipeline]
 
@@ -42,9 +41,11 @@ def test_a_pipeline_refuses_an_analysis_of_another(cls):
         cls(production(other.pipeline_name))
 
 
-def test_the_strategy_says_it_is_not_implemented():
-    with pytest.raises(StrategyError, match="not implemented"):
-        RunStrategy().expand({}, MagicMock())
+def test_a_blueprint_with_nothing_in_it_is_refused_by_the_strategy_with_a_reason():
+    from asimov.strategies import expand_plugin_strategy
+
+    with pytest.raises(StrategyError, match="cwinpy-run needs 'interferometers'"):
+        expand_plugin_strategy({"name": "x", "strategy": {"type": "cwinpy-run"}})
 
 
 def test_a_failure_is_deterministic_unless_it_says_otherwise():

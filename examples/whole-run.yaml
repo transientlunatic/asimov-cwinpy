@@ -1,0 +1,50 @@
+# A whole observing run from one blueprint: the `cwinpy-run` strategy makes the run subject
+# `O4a-heterodyne` with its shards and the merge (as in run.yaml), and for each pulsar a subject
+# with a parameter estimation that needs the merge (as in pulsar.yaml).
+#
+#   asimov apply -f examples/whole-run.yaml
+#
+# Applying it again does nothing to what already exists. Pulsars that are added later are given a
+# `batch`, which has shards and a merge of its own, so that what is done is not done again.
+kind: analysis
+name: O4a
+strategy:
+  type: cwinpy-run
+  run: O4a-heterodyne        # the name of the run subject (default: <name>-heterodyne)
+  interferometers: [H1, L1]
+  frequency factors: [1, 2]
+  data start: 1368975618
+  data end: 1380000000
+  # Whole jobs of `joblength` (a day, unless given) to a shard: about 40 shards here. Or
+  # `{length: <seconds>}` for shards of at least that long.
+  shards: {count: 40}
+  pulsars:
+    # The name of each pulsar is its PSRJ.
+    - /path/to/J0534+2200.par
+    - /path/to/J0537-6910.par
+    # - {ephemeris: /path/to/J1939+2134.par, batch: late-additions}
+  heterodyne:
+    data:
+      channels: {H1: "H1:GDS-CALIB_STRAIN", L1: "L1:GDS-CALIB_STRAIN"}
+      frame types: {H1: H1_HOFT_C00, L1: L1_HOFT_C00}
+      segments: {H1: "H1:DMT-ANALYSIS_READY:1", L1: "L1:DMT-ANALYSIS_READY:1"}
+      datafind url: datafind.igwn.org
+      datafind url type: osdf
+    settings:                # what is under `cwinpy-heterodyne:` in a shard
+      strict data requirement: true
+    scheduler:
+      request memory: 16384MB
+      request disk: 40GB
+      accounting group: ligo.prod.o4.cw.targeted.bayesian
+    # Asimov submits a shard again, after an hour, up to ten times, if a frame file cannot be read.
+    retry: {attempts: 10, delay: 3600}
+  merge:
+    retry: {attempts: 3, delay: 600}
+  pe:
+    sampler: {sampler: dynesty}
+    priors:
+      h0: {type: uniform, minimum: 0.0, maximum: 1.0e-22}
+      phi0: {type: uniform, minimum: 0.0, maximum: 3.141592653589793}
+      iota: {type: sine, minimum: 0.0, maximum: 3.141592653589793}
+      psi: {type: uniform, minimum: 0.0, maximum: 1.5707963267948966}
+    scheduler: {request memory: 8192MB}

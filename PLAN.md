@@ -146,7 +146,10 @@ The retry policy's keys were not in the ledger vocabulary at first, so
 6. ~~Merge pipeline~~ (done): `cwinpy-merge` plans the merges from the shards' files, runs them
    as one job that checks every input first, and provides the merged files for `cwinpy-pe`.
    Tested with the real cwinpy through the whole chain (shards, merge, parameter estimation).
-7. `cwinpy-run` strategy.
+7. ~~`cwinpy-run` strategy~~ (done): one blueprint expands into the run subject, its shards and
+   merge, and a subject with a parameter estimation for each pulsar. Pulsars added later are
+   a `batch` rather than made by `extend` (see below). The whole chain has been run from one
+   blueprint with the real cwinpy (`tests/test_chain_cwinpy.py`).
 8. End-to-end: a mock run with fake `cwinpy` executables and injected frame
    failures to prove the retry loop; O1 hardware injections on LDG; a small O4
    slice.
@@ -218,6 +221,32 @@ Found by running cwinpy, not from its documentation:
   database ledger, which is the default, is fine, and the chain test uses it.
 - The three pipelines fit together: what `cwinpy-heterodyne` provides is what `cwinpy-merge`
   reads, and what that provides is what `cwinpy-pe` reads, checked on real data.
+
+## What step 7 taught us
+
+- **The plan said `extend` would top up pulsars added later; a `batch` does it better.** `extend`
+  runs when an analysis finishes, and what it should add depends on which pulsars are new, which is
+  a fact about the blueprint, not about a finished analysis. A blueprint that is expanded again
+  (applied again) is the natural moment, but then `expand` must give the same documents for the
+  same blueprint, or the group's names would change. So a pulsar is given an explicit `batch`; a
+  batch is shards (`<batch>-shard-NNNN`) and a merge (`merge-<batch>`) over the same span, and its
+  pulsars' parameter estimations need that merge. Nothing that exists is changed, and the output of
+  `expand` is a function of the blueprint alone. The cost is that the user names the batch.
+- **A shard is a whole number of jobs.** `shards: {count: n}` is "about n": `ceil(jobs / n)` jobs to
+  a shard, so the last is short and fewer than `n` come out if there are fewer jobs than that.
+  (A `min(n, jobs)` that I had first was redundant, which a mutation of it showed.)
+- **Settings are copied to every shard, not inherited from the run subject.** That keeps each
+  analysis complete in the ledger and lets a shard be changed on its own, at the price of a ledger
+  that holds the 200 `.par` paths once per shard. Moving `ephemerides` to the run subject would
+  need the pipelines to read it from there; not done.
+- **Names of pulsars are their `PSRJ`**, read from the `.par` file when the blueprint is applied
+  (so the file has to be there). `name:` overrides it. Names are limited to letters, digits and
+  `_ . + -`, so that they are safe as directory names.
+- **The group cap is core's.** 40 shards and 200 pulsars is about 241 analyses, under 500.
+  The strategy does not check it; asimov refuses the blueprint, with a message.
+- The `e2e` environment drifts: with Python 3.13 a fresh `pip install cwinpy` brought bilby 2.8.2
+  and dynesty 3.2.0, which bilby cannot import (`apply_reflect`); dynesty 3.0.0 works. CI, on 3.11,
+  has not been hit by this. Pin if it is.
 
 ## Open questions
 
