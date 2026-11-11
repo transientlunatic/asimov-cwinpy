@@ -1,0 +1,61 @@
+# A small run for trying the plugin on a pool: ONE day of data, two pulsars, one frequency factor.
+# The same strategy as whole-run.yaml, with the size turned down.
+#
+#   asimov apply -f examples/test-run.yaml
+#
+# What it makes: two shards of half a day (each of two 6-hour jobs for each detector), the merge,
+# and for each pulsar a parameter estimation. That is 8 heterodyne jobs, 1 merge job and 2
+# `cwinpy_pe` jobs, and every job reads at most 6 hours of data. The cost is the frame reading,
+# which is about one day of each detector's strain channel, and that is the same however it is
+# divided; asimov's progress line (`N of M jobs done`) shows how it is going.
+#
+# Choose a day when both detectors were observing. Otherwise a detector with little science time
+# has few or no jobs, and `minimum coverage` (below) will not see the missing data as a failure
+# (it compares with the science time) but the PE has less to work with.
+#
+# Check with:  asimov vocabulary check examples/*.yaml
+kind: analysis
+name: O4a-test
+strategy:
+  type: cwinpy-run
+  interferometers: [H1, L1]
+  frequency factors: [2]           # the l=m=2 harmonic only: half the heterodyne output
+  data start: 1368975618           # one day from the start of O4
+  data end: 1369062018
+  joblength: 21600                 # 6 hours: short jobs, so that a failed one is quickly run again
+  shards: {count: 2}
+  pulsars:
+    - /path/to/J0534+2200.par
+    - /path/to/J0537-6910.par
+  heterodyne:
+    data:
+      channels: {H1: "H1:GDS-CALIB_STRAIN", L1: "L1:GDS-CALIB_STRAIN"}
+      frame types: {H1: H1_HOFT_C00, L1: L1_HOFT_C00}
+      segments: {H1: "H1:DMT-ANALYSIS_READY:1", L1: "L1:DMT-ANALYSIS_READY:1"}
+      datafind url: datafind.igwn.org
+      datafind url type: osdf
+    settings:
+      strict data requirement: true
+      # 6-hour jobs lose a few minutes at each end: 0.9 is a loose check that nothing larger was left out.
+      minimum coverage: 0.9
+    scheduler:
+      request memory: 8192MB
+      request disk: 20GB
+      accounting group: ligo.dev.o4.cw.targeted.bayesian
+    # Short enough to see the retry policy work in a test: three tries, a minute apart.
+    retry: {attempts: 3, delay: 60}
+  merge:
+    retry: {attempts: 2, delay: 60}
+  pe:
+    sampler:
+      sampler: dynesty
+      sampler kwargs: {nlive: 250}
+    priors:
+      h0: {type: uniform, minimum: 0.0, maximum: 1.0e-22}
+      phi0: {type: uniform, minimum: 0.0, maximum: 3.141592653589793}
+      iota: {type: sine, minimum: 0.0, maximum: 3.141592653589793}
+      psi: {type: uniform, minimum: 0.0, maximum: 1.5707963267948966}
+    scheduler:
+      request memory: 4096MB
+      accounting group: ligo.dev.o4.cw.targeted.bayesian
+    retry: {attempts: 2, delay: 60}

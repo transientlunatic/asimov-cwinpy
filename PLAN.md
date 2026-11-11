@@ -309,3 +309,14 @@ no expected output, rather than an empty file, which would stop a shard from com
   slice of a full-run output? Chunk edges depend on the segment list.
 - Does a DAGMan job with failed nodes really appear as Completed on the pool?
 - Slurm is out of scope for the DAG path.
+- **Report pages.** cwinpy makes summary pages (`cwinpy_generate_summary_pages`, from
+  `cwinpy.pe.summary`) for the whole set of pulsars, not per `cwinpy_pe` job: it builds the PE
+  pipeline's object from a `cwinpy_knope_pipeline`/`cwinpy_pe_pipeline` configuration
+  (`pe_pipeline(config, build=False)`) and reads its `resultsbase` and `resultsfiles`. Asimov's run
+  report links a pipeline's pages through `Pipeline.result_pages()` (a list of `(label, url)` relative
+  to the report root, shown once the analysis is finished). This plugin does neither yet: nothing is
+  generated, and `result_pages()` returns nothing. A `cwinpy-summary` analysis that needs every PE of a
+  run, writes such a configuration pointing at their results, runs the generator into the web
+  directory and returns its page from `result_pages()` would do both. Not tried: whether
+  `pe_pipeline(build=False)` accepts a configuration that was written to describe results made by
+  separate `cwinpy_pe` jobs.
