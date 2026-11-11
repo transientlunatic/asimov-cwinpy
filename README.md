@@ -7,8 +7,8 @@ parameters of the signal of each pulsar.
 
 > **Status: pre-alpha.** `cwinpy-heterodyne`, `cwinpy-merge` and `cwinpy-pe` work, and have been
 > run through asimov together with the real cwinpy: two shards of fake frames, merged, then
-> analysed (the shards' DAGs are run without HTCondor). Only the `cwinpy-run` strategy is not
-> written. Nothing has been run on an HTCondor pool. [`PLAN.md`](PLAN.md) says what is done and
+> analysed (the shards' DAGs are run without HTCondor), from a blueprint that the `cwinpy-run`
+> strategy expands. Nothing has been run on an HTCondor pool. [`PLAN.md`](PLAN.md) says what is done and
 > what is next.
 
 ## What it provides
@@ -19,7 +19,7 @@ parameters of the signal of each pulsar.
 | `cwinpy-merge` | pipeline | Merges the heterodyned files of the shards of a run, for each pulsar, detector and frequency factor, into one file each. |
 | `cwinpy-pe` | pipeline | Estimates the parameters of the signal of one pulsar, as a single `cwinpy_pe` job. |
 | `cwinpy` | analysis type | A generic analysis, with no gravitational-wave transient metadata. The pipelines above declare it. |
-| `cwinpy-run` | strategy | Will expand a description of a run into its shards, merge, and one analysis per pulsar (not written yet). |
+| `cwinpy-run` | strategy | Expands one description of a run into its shards, merge, and a subject with a parameter estimation for each pulsar. |
 
 ## How a run is laid out
 
@@ -40,6 +40,43 @@ has finished. Splitting a run into shards means a shard with a failure finishes
 early and can be tried again, using asimov's own
 [retry policy](https://github.com/etive-io/asimov/pull/299) (`retry:` and `on failure:`
 in a blueprint). The plugin will tell the policy which failures are transient.
+
+### One blueprint for a whole run
+
+The `cwinpy-run` strategy writes all of that from one blueprint
+([`examples/whole-run.yaml`](examples/whole-run.yaml)):
+
+```yaml
+kind: analysis
+name: O4a
+strategy:
+  type: cwinpy-run
+  interferometers: [H1, L1]
+  data start: 1368975618
+  data end: 1380000000
+  shards: {count: 40}            # or {length: seconds}
+  pulsars: [/path/to/J0534+2200.par, /path/to/J0537-6910.par]
+  heterodyne: {data: {...}, retry: {attempts: 10, delay: 3600}}
+```
+
+| Option | |
+|---|---|
+| `interferometers`, `data start`, `data end`, `shards`, `pulsars` | Required. `frequency factors` defaults to `[1, 2]`; `run` names the run subject (default `<name>-heterodyne`); `joblength` is the length of data one job reads (default a day). |
+| `heterodyne` | `data`, `scheduler` and `retry` go on every shard as they are; `settings` goes under `cwinpy-heterodyne:` (`strict data requirement`, `segment lists`, ...). |
+| `merge` | `scheduler`, `retry`. |
+| `pe` | `sampler`, `scheduler`, `retry` go on each parameter estimation; `priors` on each pulsar; `settings` under `cwinpy-pe:`. |
+
+A shard is a whole number of jobs, so `shards: {count: 40}` makes about 40 (fewer if there are
+fewer jobs), with the last one short. Pulsars are named by the `PSRJ` of their `.par` file, or
+by `name:` if the entry is a mapping. Every name comes from the blueprint alone, so applying it
+again changes nothing that exists, and an error applies nothing.
+
+**Pulsars added later** are given a `batch` (`{ephemeris: ..., batch: late}`). A batch has shards
+(`late-shard-0001` ...) and a merge (`merge-late`) of its own, over the same span, so the data of
+the pulsars that are done is not made again, and their analyses are not changed. A pulsar's
+parameter estimation needs the merge of its batch. The strategy counts about
+`shards x batches + pulsars + batches` analyses; asimov refuses a group of more than
+`[strategy] max_group_analyses` (500 unless set).
 
 See [`examples/`](examples) for blueprints, and check them with:
 
@@ -90,6 +127,12 @@ files make a *transient* failure, which asimov's retry policy (`retry:` in the b
 tries again after a delay; any other failure is not transient. A DAG that has not ended is
 left alone, and not treated as failed. Submitting a DAG a second time needs
 [etive-io/asimov#314](https://github.com/etive-io/asimov/issues/314).
+
+While the DAG runs, `asimov monitor` shows how far it has got, read from DAGMan's own log:
+`120 of 2000 jobs done (6%), 20 queued or running, 3 failed` (a job counts as failed when it has
+used up its retries). The counts are kept in the ledger as `progress`, with when they were read.
+It only reports: whether the shard is complete or has failed is decided as above. The format of
+DAGMan's table has not been checked on a pool; if it is not found nothing is shown.
 
 The result is the `heterodyned files` asset, `{pulsar: {detector: {factor: [path, ...]}}}`,
 for `cwinpy-merge`.

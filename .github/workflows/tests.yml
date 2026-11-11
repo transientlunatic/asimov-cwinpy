@@ -113,7 +113,9 @@ jobs:
         pip install "$ASIMOV"
         # cwinpy 1.5.0 cannot read its configuration files with ConfigArgParse 1.7.6
         # or later (1.7.5 is the last that works)
-        pip install cwinpy "ConfigArgParse<1.7.6"
+        # bilby 2.8.2 imports apply_reflect from dynesty, which dynesty 3.2.0 does not have
+        # (3.0.0 has it)
+        pip install cwinpy "ConfigArgParse<1.7.6" "dynesty<3.2"
         pip install -e ".[dev]"
 
     - name: Run the real cwinpy through asimov

@@ -141,12 +141,16 @@ The retry policy's keys were not in the ledger vocabulary at first, so
    the files to expect, submits it (and submits it again to resume it), recognises completion, and
    classifies failures. Tested with the real runner and the real `cwinpy_heterodyne` jobs on fake
    frames; no HTCondor.
-5. Failure handling, the rest: progress reporting from DAGMan's logs, the coverage threshold,
-   and output retention. (Classification of failures is done, in step 4.)
+5. Failure handling, the rest: ~~progress reporting from DAGMan's logs~~ (done: `while_running` of
+   `cwinpy-heterodyne`), the coverage threshold, and output retention. (Classification of
+   failures is done, in step 4.)
 6. ~~Merge pipeline~~ (done): `cwinpy-merge` plans the merges from the shards' files, runs them
    as one job that checks every input first, and provides the merged files for `cwinpy-pe`.
    Tested with the real cwinpy through the whole chain (shards, merge, parameter estimation).
-7. `cwinpy-run` strategy.
+7. ~~`cwinpy-run` strategy~~ (done): one blueprint expands into the run subject, its shards and
+   merge, and a subject with a parameter estimation for each pulsar. Pulsars added later are
+   a `batch` rather than made by `extend` (see below). The whole chain has been run from one
+   blueprint with the real cwinpy (`tests/test_chain_cwinpy.py`).
 8. End-to-end: a mock run with fake `cwinpy` executables and injected frame
    failures to prove the retry loop; O1 hardware injections on LDG; a small O4
    slice.
@@ -202,6 +206,18 @@ Found by running cwinpy, not from its documentation:
 4. That a real unreadable disk gives the signatures above, and not only a truncated file does.
 5. That the per-node `.err` files are where `failed_nodes` looks (`<rundir>/log/`), after a
    retry has overwritten them.
+6. That DAGMan's log has the table the progress is read from, in the form the tests write:
+
+   ```
+   Of 2000 nodes total:
+    Done     Pre   Queued    Post   Ready   Un-Ready   Failed
+     ===     ===      ===     ===     ===        ===      ===
+     120       0       20       0    1860          0        0
+   ```
+
+   (with the date and time at the start of each line), and that it is written often enough to be
+   current, and within the last 100 kB of the log. If it is not there the monitor says nothing
+   about progress, and nothing else is affected.
 
 ## What step 6 taught us
 
@@ -218,6 +234,50 @@ Found by running cwinpy, not from its documentation:
   database ledger, which is the default, is fine, and the chain test uses it.
 - The three pipelines fit together: what `cwinpy-heterodyne` provides is what `cwinpy-merge`
   reads, and what that provides is what `cwinpy-pe` reads, checked on real data.
+
+## What progress reporting taught us
+
+- **Where the counts come from.** DAGMan writes a table of how many nodes are done, queued, ready
+  and failed to its own log, which is also where the end of the DAG is read. One read of the end of
+  that file gives the counts; counting the output files instead would be a few thousand `stat`s of
+  a shared file system for each shard on every monitor cycle, and cannot tell a job that is running
+  from one that has not started.
+- **It is only a report.** `while_running` is called by the monitor while the DAG is in the queue; it
+  writes `progress` (the counts and when they were read) to the ledger and one line to the monitor,
+  and decides nothing: completion and failure are still read as before. A log with no table, or a
+  table cut off, says nothing.
+- **A `failed` node is one that has used up its retries**, so a nonzero count here while the DAG runs
+  is a job that will be reported when the DAG ends, and the monitor shows it in red.
+- The format of the table is not checked against a pool (item 6 above), and the test of it uses the
+  form from memory, so it can agree with the code and still be wrong.
+- Mutation testing found two tests that did not discriminate (a percentage that happened to be
+  exact, and a log long enough to need the tail but with the table in it); both were rewritten.
+
+## What step 7 taught us
+
+- **The plan said `extend` would top up pulsars added later; a `batch` does it better.** `extend`
+  runs when an analysis finishes, and what it should add depends on which pulsars are new, which is
+  a fact about the blueprint, not about a finished analysis. A blueprint that is expanded again
+  (applied again) is the natural moment, but then `expand` must give the same documents for the
+  same blueprint, or the group's names would change. So a pulsar is given an explicit `batch`; a
+  batch is shards (`<batch>-shard-NNNN`) and a merge (`merge-<batch>`) over the same span, and its
+  pulsars' parameter estimations need that merge. Nothing that exists is changed, and the output of
+  `expand` is a function of the blueprint alone. The cost is that the user names the batch.
+- **A shard is a whole number of jobs.** `shards: {count: n}` is "about n": `ceil(jobs / n)` jobs to
+  a shard, so the last is short and fewer than `n` come out if there are fewer jobs than that.
+  (A `min(n, jobs)` that I had first was redundant, which a mutation of it showed.)
+- **Settings are copied to every shard, not inherited from the run subject.** That keeps each
+  analysis complete in the ledger and lets a shard be changed on its own, at the price of a ledger
+  that holds the 200 `.par` paths once per shard. Moving `ephemerides` to the run subject would
+  need the pipelines to read it from there; not done.
+- **Names of pulsars are their `PSRJ`**, read from the `.par` file when the blueprint is applied
+  (so the file has to be there). `name:` overrides it. Names are limited to letters, digits and
+  `_ . + -`, so that they are safe as directory names.
+- **The group cap is core's.** 40 shards and 200 pulsars is about 241 analyses, under 500.
+  The strategy does not check it; asimov refuses the blueprint, with a message.
+- The `e2e` environment drifts: with Python 3.13 a fresh `pip install cwinpy` brought bilby 2.8.2
+  and dynesty 3.2.0, which bilby cannot import (`apply_reflect`); dynesty 3.0.0 works. CI, on 3.11,
+  has not been hit by this. Pin if it is.
 
 ## Open questions
 

@@ -29,7 +29,9 @@ import io
 import json
 import os
 import re
+import time
 
+import click
 from asimov import config
 from asimov.pipeline import PipelineException
 from asimov.utils import set_directory
@@ -49,6 +51,13 @@ ASSET = "heterodyned files"
 #: How DAGMan says in its log that it has finished, and how.
 _EXITED = re.compile(r"EXITING WITH STATUS (\d+)")
 
+#: The table of counts that DAGMan writes to its log as it runs, with the number of nodes
+#: in the line before it (``Of 2000 nodes total:``). The numbers are the row two lines
+#: under the heading, after the date and time that every line of the log starts with.
+_TOTAL = re.compile(r"Of (\d+) nodes total")
+_COUNTS = re.compile(r"Done\s+Pre\s+Queued\s+Post\s+Ready\s+Un-Ready\s+Failed")
+_ROW = re.compile(r"(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$")
+
 #: What a job writes to its error output when it could not read a frame file,
 #: found by making cwinpy read a damaged one. These are the failures that trying
 #: again is likely to fix, as a disk or a machine comes back.
@@ -63,6 +72,61 @@ FRAME_READ_ERRORS = (
 
 #: How much of the end of the DAGMan log is read, which is where it ends.
 _TAIL = 100_000
+
+
+def parse_progress(text):
+    """
+    The latest counts of the nodes of a DAG, from the log of DAGMan.
+
+    Parameters
+    ----------
+    text : str
+        The log, or the end of it.
+
+    Returns
+    -------
+    dict or None
+        ``total``, ``done``, ``pre``, ``queued``, ``post``, ``ready``, ``waiting`` and
+        ``failed`` (a node counts as failed when it has used up its retries), as integers,
+        or None if the log has no table of counts yet.
+    """
+    headings = list(_COUNTS.finditer(text))
+    if not headings:
+        return None
+    last = headings[-1]
+    row = None
+    start = last.end()
+    for line in text[start:].splitlines()[1:4]:
+        row = _ROW.search(line)
+        if row:
+            break
+    if row is None:
+        return None
+    done, pre, queued, post, ready, waiting, failed = (int(n) for n in row.groups())
+    total = _TOTAL.findall(text[: last.start()])
+    return {
+        "total": int(total[-1]) if total else done + pre + queued + post + ready + waiting + failed,
+        "done": done,
+        "pre": pre,
+        "queued": queued,
+        "post": post,
+        "ready": ready,
+        "waiting": waiting,
+        "failed": failed,
+    }
+
+
+def describe_progress(progress):
+    """The counts as a line for the monitor: ``120 of 2000 jobs done (6%), 20 queued, 3 failed``."""
+    total = progress["total"]
+    text = f"{progress['done']} of {total} jobs done"
+    if total:
+        text += f" ({100 * progress['done'] // total}%)"
+    active = progress["pre"] + progress["queued"] + progress["post"]
+    text += f", {active} queued or running"
+    if progress["failed"]:
+        text += click.style(f", {progress['failed']} failed", "red")
+    return text
 
 
 class HeterodynePipeline(CwinpyPipeline):
@@ -485,6 +549,16 @@ class HeterodynePipeline(CwinpyPipeline):
 
     # Knowing how it went
 
+    def _dagman_tail(self):
+        """The end of the log of DAGMan, which is where it ends and where it counts, or None."""
+        try:
+            with open(f"{self.dag_file()}.dagman.out", "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                handle.seek(max(0, handle.tell() - _TAIL))
+                return handle.read().decode("utf-8", errors="replace")
+        except OSError:
+            return None
+
     def dag_outcome(self):
         """
         How the last run of the DAG ended, from the log of DAGMan.
@@ -495,17 +569,34 @@ class HeterodynePipeline(CwinpyPipeline):
             ``"succeeded"`` or ``"failed"`` (the DAG ended, with or without a rescue file
             for the nodes that failed), or None if there is no sign that it has ended.
         """
-        try:
-            with open(f"{self.dag_file()}.dagman.out", "rb") as handle:
-                handle.seek(0, os.SEEK_END)
-                handle.seek(max(0, handle.tell() - _TAIL))
-                text = handle.read().decode("utf-8", errors="replace")
-        except OSError:
-            return None
-        ended = _EXITED.findall(text)
+        text = self._dagman_tail()
+        ended = _EXITED.findall(text) if text else None
         if not ended:
             return None
         return "succeeded" if int(ended[-1]) == 0 else "failed"
+
+    def dag_progress(self):
+        """
+        How far the DAG has got, from the log of DAGMan.
+
+        Returns
+        -------
+        dict or None
+            The counts of :func:`parse_progress`, or None if DAGMan has not said yet.
+        """
+        text = self._dagman_tail()
+        return parse_progress(text) if text else None
+
+    def while_running(self):
+        """
+        Say how far the DAG has got: in the output of the monitor, and in the ledger, as
+        ``progress`` (the counts, and when they were read), where it is until the DAG ends.
+        """
+        progress = self.dag_progress()
+        if progress is None:
+            return
+        self.production.meta["progress"] = {**progress, "read": int(time.time())}
+        click.echo("  \t  " + click.style("●", "green") + " " + describe_progress(progress))
 
     def detect_completion(self):
         """
