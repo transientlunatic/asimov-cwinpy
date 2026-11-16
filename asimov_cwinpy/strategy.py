@@ -59,10 +59,12 @@ OPTIONS = {
     "heterodyne",
     "merge",
     "pe",
+    "summary",
 }
 HETERODYNE_OPTIONS = {"data", "settings", "scheduler", "retry"}
 MERGE_OPTIONS = {"scheduler", "retry"}
 PE_OPTIONS = {"settings", "sampler", "priors", "scheduler", "retry"}
+SUMMARY_OPTIONS = {"settings", "scheduler", "retry"}
 
 #: The line of a ``.par`` file that names the pulsar, in the order that cwinpy prefers.
 _NAME = re.compile(r"^\s*(PSRJ|PSR|NAME)\s+(\S+)", re.IGNORECASE)
@@ -164,6 +166,7 @@ class RunStrategy(Strategy):
         _mapping(spec, "heterodyne", HETERODYNE_OPTIONS)
         _mapping(spec, "merge", MERGE_OPTIONS)
         _mapping(spec, "pe", PE_OPTIONS)
+        self.summary(spec)
         self.pulsars(spec)
 
     @staticmethod
@@ -199,6 +202,29 @@ class RunStrategy(Strategy):
             or not all(isinstance(f, (int, float)) and not isinstance(f, bool) for f in factors)
         ):
             raise StrategyError("'frequency factors' must be a list of numbers.")
+
+    @staticmethod
+    def summary(spec):
+        """
+        What is asked of the summary pages.
+
+        Returns
+        -------
+        dict or None
+            The ``summary`` block (empty if it is just ``true``), or None if there are to be no
+            summary pages.
+
+        Raises
+        ------
+        StrategyError
+            If it is not true, false or a mapping, or has an option that it does not.
+        """
+        asked = spec.get("summary")
+        if asked is None or asked is False:
+            return None
+        if asked is True:
+            return {}
+        return _mapping(spec, "summary", SUMMARY_OPTIONS)
 
     def pulsars(self, spec):
         """
@@ -328,4 +354,23 @@ class RunStrategy(Strategy):
                         **({"cwinpy-pe": deepcopy(pe["settings"])} if pe.get("settings") else {}),
                     }
                 )
+        summary = self.summary(spec)
+        if summary is not None:
+            documents.append(
+                {
+                    "kind": "analysis",
+                    "name": "summary",
+                    "pipeline": "cwinpy-summary",
+                    "event": run,
+                    "needs": sorted(
+                        f"{name}/pe" for members in batches.values() for name, _ in members
+                    ),
+                    **self._tail(summary, "scheduler", "retry"),
+                    **(
+                        {"cwinpy-summary": deepcopy(summary["settings"])}
+                        if summary.get("settings")
+                        else {}
+                    ),
+                }
+            )
         return documents

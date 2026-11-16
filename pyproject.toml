@@ -58,6 +58,7 @@ Issues = "https://github.com/transientlunatic/asimov-cwinpy/issues"
 cwinpy-heterodyne = "asimov_cwinpy.heterodyne:HeterodynePipeline"
 cwinpy-merge = "asimov_cwinpy.merge:MergePipeline"
 cwinpy-pe = "asimov_cwinpy.pe:PEPipeline"
+cwinpy-summary = "asimov_cwinpy.summary:SummaryPipeline"
 
 [project.entry-points."asimov.analysis_types"]
 # Generic analyses with no gravitational-wave transient metadata. Also brings the
@@ -72,6 +73,7 @@ cwinpy-run = "asimov_cwinpy.strategy:RunStrategy"
 # terms shared by the pipelines are on the analysis type.
 cwinpy-heterodyne = "asimov_cwinpy:vocabulary_heterodyne"
 cwinpy-pe = "asimov_cwinpy:vocabulary_pe"
+cwinpy-summary = "asimov_cwinpy:vocabulary_summary"
 
 [tool.setuptools.packages.find]
 where = ["."]

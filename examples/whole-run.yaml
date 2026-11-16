@@ -51,3 +51,7 @@ strategy:
       iota: {type: sine, minimum: 0.0, maximum: 3.141592653589793}
       psi: {type: uniform, minimum: 0.0, maximum: 1.5707963267948966}
     scheduler: {request memory: 8192MB}
+  # cwinpy's summary pages for all of the pulsars, linked from asimov's report. This adds an
+  # analysis that needs the parameter estimation of every pulsar. `cweqgen` has to be installed
+  # where the job runs; see the README for the settings (`settings: {time series: false}` ...).
+  summary: true

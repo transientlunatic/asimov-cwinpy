@@ -19,12 +19,14 @@ from asimov_cwinpy.common import ANALYSIS_TYPE
 from asimov_cwinpy.heterodyne import HeterodynePipeline
 from asimov_cwinpy.merge import MergePipeline
 from asimov_cwinpy.pe import PEPipeline
+from asimov_cwinpy.summary import SummaryPipeline
 from asimov_cwinpy.types import CwinpyAnalysis
 
 PIPELINES = {
     "cwinpy-heterodyne": HeterodynePipeline,
     "cwinpy-merge": MergePipeline,
     "cwinpy-pe": PEPipeline,
+    "cwinpy-summary": SummaryPipeline,
 }
 
 
@@ -92,11 +94,19 @@ def test_the_pe_terms_belong_to_the_pe_pipeline():
         assert term.owner == "cwinpy-pe", path
 
 
+def test_the_summary_terms_belong_to_the_summary_pipeline():
+    vocabulary = get_vocabulary(refresh=True)
+    for path in ("posteriors", "time series", "upper limit plot", "snr", "sort by", "only msps"):
+        term = vocabulary.lookup(f"cwinpy-summary.{path}")
+        assert term is not None, path
+        assert term.owner == "cwinpy-summary", path
+
+
 def test_every_registered_vocabulary_loads():
     """A vocabulary that fails to load is skipped with a warning, and its namespace then
     goes unchecked, so `asimov vocabulary check` passes without checking anything."""
     registered = {e.name for e in entry_points(group="asimov.vocabulary") if "cwinpy" in e.name}
-    assert registered == {"cwinpy-heterodyne", "cwinpy-pe"}
+    assert registered == {"cwinpy-heterodyne", "cwinpy-pe", "cwinpy-summary"}
     assert registered <= set(get_vocabulary(refresh=True).plugins)
 
 
