@@ -59,6 +59,9 @@ _TOTAL = re.compile(r"Of (\d+) nodes total")
 _COUNTS = re.compile(r"Done\s+Pre\s+Queued\s+Post\s+Ready\s+Un-Ready\s+Failed")
 _ROW = re.compile(r"(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$")
 
+#: What cwinpy says, when it makes the DAG, of a detector that has no science data in the span.
+_NO_SEGMENTS = re.compile(r"No science data segments exist for (\w+)")
+
 #: What a job writes to its error output when it could not read a frame file,
 #: found by making cwinpy read a damaged one. These are the failures that trying
 #: again is likely to fix, as a disk or a machine comes back.
@@ -115,6 +118,16 @@ def parse_progress(text):
         "waiting": waiting,
         "failed": failed,
     }
+
+
+def utc(gps):
+    """A GPS time as UTC to the second, or None if astropy is not there to say."""
+    try:
+        from astropy.time import Time
+
+        return Time(gps, format="gps").utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:
+        return None
 
 
 def describe_progress(progress):
@@ -399,6 +412,36 @@ class HeterodynePipeline(CwinpyPipeline):
             )
         return os.path.join(repository.directory, self.category, found[0])
 
+    def why_no_dag(self, error):
+        """
+        What to tell the user when cwinpy could not make the DAG.
+
+        cwinpy makes the DAG of a shard only if every detector has some science data in the whole
+        span of it, and says only ``No science data segments exist for H1``, which does not say
+        for which shard, which span, or what to do. This says all three.
+        """
+        text = f"cwinpy could not make the DAG: {error}"
+        found = _NO_SEGMENTS.search(str(error))
+        if not found:
+            return text
+        detector = found.group(1)
+        start, end = self.times()
+        when = [utc(start), utc(end)]
+        span = f"GPS {start} to {end}" + (f" ({when[0]} to {when[1]})" if all(when) else "")
+        if self.from_caches():
+            source = (self.settings().get("segment lists") or {}).get(detector)
+            source = f"the segment list {source}" if source else "its segment list"
+        else:
+            flag = (self.data().get("segments") or {}).get(detector)
+            source = f"the flag {flag}" if flag else "its flag"
+        return (
+            f"{text}. The span of {self.production.name}, {span}, has no science data for "
+            f"{detector} in {source}, and cwinpy makes the DAG of a shard only if every detector "
+            f"has some. Use a span in which {detector} was observing, or fewer and longer shards "
+            f"(in a cwinpy-run blueprint, `shards: {{count: ...}}`), or leave {detector} out of "
+            f"`interferometers`."
+        )
+
     def build_dag(self, dryrun=False):
         """
         Make the DAG with cwinpy, and write down which files it will produce.
@@ -440,7 +483,7 @@ class HeterodynePipeline(CwinpyPipeline):
                 runner = HeterodyneDAGRunner(parser)
         except Exception as error:
             raise PipelineException(
-                f"cwinpy could not make the DAG: {error}", production=self.production.name
+                self.why_no_dag(error), production=self.production.name
             ) from error
 
         records = [

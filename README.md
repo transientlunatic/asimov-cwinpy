@@ -118,6 +118,29 @@ To make a run smaller, change the blueprint and nothing else: a shorter `data st
 to every heterodyne job), `frequency factors: [2]`, a lower `nlive` in `pe: sampler: sampler kwargs`,
 and a short `retry: {delay: 60}` so that the retry policy can be seen working.
 
+**Choosing the span.** cwinpy makes the DAG of a shard only if *every* detector has some science
+data in the whole span of the shard, and otherwise stops with `No science data segments exist for H1`
+(the plugin adds which shard, span and flag, and what to do). So a span in which one detector was down
+for all of a shard fails that shard, even if the other detector observed throughout, and the more
+and shorter the shards, the likelier it is. For a test, choose a day on which both were observing
+(`test-run.yaml` is one shard for that reason). With access to the segment database, for example:
+
+```python
+from gwpy.segments import DataQualityFlag
+
+start, end = 1368975618, 1368975618 + 30 * 86400
+h1 = DataQualityFlag.query("H1:DMT-ANALYSIS_READY:1", start, end)
+l1 = DataQualityFlag.query("L1:DMT-ANALYSIS_READY:1", start, end)
+both = h1.active & l1.active
+for day in range(start, end, 86400):
+    hours = sum(min(b, day + 86400) - max(a, day) for a, b in both if b > day and a < day + 86400)
+    print(day, f"{hours / 3600:4.1f} h with both detectors")
+```
+
+Take a day with most of its hours, and put its GPS time in `data start` and `data end`. (A shard with
+no science data for a detector is not skipped or run without it: that is a decision the plugin does not
+make for you yet; see `PLAN.md`.)
+
 Asimov itself is not the limit at the full size. A blueprint of 200 pulsars in 40 shards, made into
 233 analyses in 201 subjects, took 7 s to apply, 9 s for `asimov monitor` and 11 s for `asimov manage
 build`, on a scratch project (a ledger of 1.2 MB); that is under the default limit of 500 analyses
