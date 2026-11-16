@@ -460,3 +460,91 @@ def test_the_assets_are_the_merged_files_by_pulsar_detector_and_factor(planned):
     assert sorted(data["J0534+2200"]) == ["H1", "L1"]
     assert data["J0534+2200"]["H1"][2].endswith("merged_J0534+2200_H1_2f.hdf5")
     assert planned.output_paths()[ASSET] == [i["output"] for i in planned.planned()]
+
+
+# Where the job runs, and what it is given
+
+
+def description(pipeline, scheduler):
+    pipeline.submit_dag()
+    return scheduler.submit.call_args[0][0].kwargs
+
+
+def watched(project, tmp_path, extra):
+    """The pipeline of a merge with this in the ledger, and the scheduler that watches it."""
+    project.apply(blueprint(extra=extra))
+    pipeline = configured_from(project, tmp_path)
+    scheduler = MagicMock()
+    scheduler.submit.return_value = 5
+    return pipeline, scheduler
+
+
+def test_the_job_does_not_ask_for_the_environment_of_asimov(submitting):
+    pipeline, scheduler = submitting
+    job = description(pipeline, scheduler)
+    assert "getenv" not in job and "universe" not in job and "environment" not in job
+
+
+def test_a_job_on_this_machine_is_local_and_runs_the_python_that_asimov_runs_in(
+    project, provided, tmp_path
+):
+    # (not the project's software environment, in which this package may not be)
+    pipeline, scheduler = watched(project, tmp_path, "htcondor:\n  universe: local\n")
+    with (
+        patch.object(MergePipeline, "scheduler", new_callable=PropertyMock, return_value=scheduler),
+        patch(
+            "asimov_cwinpy.jobs.config.get", return_value="/cvmfs/software.igwn.org/conda/envs/x"
+        ),
+    ):
+        pipeline.submit_dag()
+    job = scheduler.submit.call_args[0][0]
+    assert job.kwargs["universe"] == "local"
+    assert job.executable == sys.executable
+    assert job.kwargs["arguments"].startswith("-m asimov_cwinpy.merge_job")
+
+
+def test_a_job_that_is_not_local_runs_the_python_of_the_software_environment(
+    project, provided, tmp_path
+):
+    bin_directory = tmp_path / "igwn" / "bin"
+    bin_directory.mkdir(parents=True)
+    (bin_directory / "python").write_text("")
+    pipeline, scheduler = watched(
+        project, tmp_path, f"scheduler:\n  environment: {tmp_path / 'igwn'}\n"
+    )
+    with patch.object(
+        MergePipeline, "scheduler", new_callable=PropertyMock, return_value=scheduler
+    ):
+        pipeline.submit_dag()
+    assert scheduler.submit.call_args[0][0].executable == str(bin_directory / "python")
+
+
+def test_an_environment_without_python_falls_back_to_the_python_of_asimov(
+    project, provided, tmp_path
+):
+    pipeline, _ = watched(project, tmp_path, f"scheduler:\n  environment: {tmp_path / 'none'}\n")
+    assert pipeline._python() == sys.executable
+
+
+def test_the_executable_of_the_analysis_is_used_over_everything(project, provided, tmp_path):
+    python = tmp_path / "mine"
+    python.write_text("")
+    pipeline, _ = watched(
+        project, tmp_path, f"executable: {python}\nhtcondor:\n  universe: local\n"
+    )
+    assert pipeline._python() == str(python)
+
+
+def test_what_the_ledger_says_of_the_job_goes_into_its_description(project, provided, tmp_path):
+    extra = (
+        "scheduler:\n  environment variables:\n    HOME: /tmp\n"
+        "htcondor:\n  requirements: (HasX =?= True)\n  getenv: true\n"
+    )
+    pipeline, scheduler = watched(project, tmp_path, extra)
+    with patch.object(
+        MergePipeline, "scheduler", new_callable=PropertyMock, return_value=scheduler
+    ):
+        job = description(pipeline, scheduler)
+    assert job["requirements"] == "(HasX =?= True)"
+    assert job["getenv"] == "true"
+    assert job["environment"] == '"HOME=/tmp"'

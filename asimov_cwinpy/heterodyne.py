@@ -38,6 +38,7 @@ from asimov.utils import set_directory
 
 from . import coverage
 from .common import CwinpyError, CwinpyPipeline, TransientCwinpyError
+from .jobs import software_environment
 
 #: The name cwinpy gives the DAG it writes.
 DAG_NAME = "cwinpy_heterodyne.dag"
@@ -294,6 +295,9 @@ class HeterodynePipeline(CwinpyPipeline):
                 section["accounting_group_user"] = config.get("condor", "user")
             except Exception:
                 pass
+        requirements = (self.production.meta.get("htcondor") or {}).get("requirements")
+        if requirements:
+            section["requirements"] = str(requirements)
         if self.data().get("datafind url type"):
             section["urltype"] = str(self.data()["datafind url type"])
         return section
@@ -383,14 +387,14 @@ class HeterodynePipeline(CwinpyPipeline):
     @contextlib.contextmanager
     def _environment(self):
         """
-        The environment that cwinpy is built in: the pipelines' environment first on
-        the path, because cwinpy finds the executable of the jobs there.
+        The environment that cwinpy is built in: the software environment of the analysis
+        (``scheduler: environment``, else ``[pipelines] environment``) first on the path, because
+        cwinpy finds the executable of the jobs there, and writes its path into the jobs. It has
+        to be one that the execute nodes see.
         """
         before = os.environ.get("PATH", "")
-        try:
-            binaries = os.path.join(config.get("pipelines", "environment"), "bin")
-        except Exception:
-            binaries = None
+        environment = software_environment(self.production)
+        binaries = os.path.join(environment, "bin") if environment else None
         if binaries and os.path.isdir(binaries):
             os.environ["PATH"] = binaries + os.pathsep + before
         try:

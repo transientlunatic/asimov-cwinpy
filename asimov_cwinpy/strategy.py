@@ -60,15 +60,16 @@ OPTIONS = {
     "shards",
     "pulsars",
     "ephemeris directory",
+    "shared filesystem",
     "heterodyne",
     "merge",
     "pe",
     "summary",
 }
-HETERODYNE_OPTIONS = {"data", "settings", "scheduler", "retry"}
-MERGE_OPTIONS = {"scheduler", "retry"}
-PE_OPTIONS = {"settings", "sampler", "priors", "scheduler", "retry"}
-SUMMARY_OPTIONS = {"settings", "scheduler", "retry"}
+HETERODYNE_OPTIONS = {"data", "settings", "scheduler", "htcondor", "retry"}
+MERGE_OPTIONS = {"scheduler", "htcondor", "retry"}
+PE_OPTIONS = {"settings", "sampler", "priors", "scheduler", "htcondor", "retry"}
+SUMMARY_OPTIONS = {"settings", "scheduler", "htcondor", "retry"}
 
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
 
@@ -151,6 +152,8 @@ class RunStrategy(Strategy):
         directory = spec.get("ephemeris directory", DIRECTORY)
         if not isinstance(directory, str) or not directory:
             raise StrategyError("'ephemeris directory' must be a path.")
+        if not isinstance(spec.get("shared filesystem", True), bool):
+            raise StrategyError("'shared filesystem' must be true or false.")
         self.pulsars(spec)
 
     @staticmethod
@@ -314,6 +317,18 @@ class RunStrategy(Strategy):
         """The settings in a block, copied, for the keys of it that are set."""
         return {key: deepcopy(block[key]) for key in keys if block.get(key) is not None}
 
+    @classmethod
+    def _job(cls, block, scheduler=None, htcondor=None):
+        """
+        The ``scheduler``, ``htcondor`` and ``retry`` settings of a block, copied, with defaults
+        for the ones that the block does not give itself (what the block says is not changed).
+        """
+        found = cls._tail(block, "scheduler", "retry", "htcondor")
+        for key, defaults in (("scheduler", scheduler), ("htcondor", htcondor)):
+            if defaults:
+                found[key] = {**deepcopy(defaults), **found.get(key, {})}
+        return found
+
     def expand(self, blueprint, context):
         spec = blueprint["strategy"]
         run = spec.get("run") or f"{blueprint['name']}-heterodyne"
@@ -323,6 +338,11 @@ class RunStrategy(Strategy):
         heterodyne = _mapping(spec, "heterodyne", HETERODYNE_OPTIONS)
         merge = _mapping(spec, "merge", MERGE_OPTIONS)
         pe = _mapping(spec, "pe", PE_OPTIONS)
+        # With no shared filesystem the light jobs (merge, summary) run on the machine that asimov
+        # runs on, where the project is, and the parameter estimation has its files transferred.
+        shared = spec.get("shared filesystem", True)
+        on_this_machine = None if shared else {"universe": "local"}
+        transferred = None if shared else {"transfer files": True}
         batches = self.pulsars(spec, fetch=True, logger=context.logger)
         if any(isinstance(e, dict) and e.get("source") == "atnf" for e in spec["pulsars"]):
             context.logger.warning(
@@ -350,7 +370,8 @@ class RunStrategy(Strategy):
                     "name": f"{prefix}shard-{number:04d}",
                     "pipeline": "cwinpy-heterodyne",
                     "event": run,
-                    **self._tail(heterodyne, "data", "scheduler", "retry"),
+                    **self._tail(heterodyne, "data"),
+                    **self._job(heterodyne),
                     "cwinpy-heterodyne": {
                         **deepcopy(heterodyne.get("settings") or {}),
                         "data start": first,
@@ -369,7 +390,7 @@ class RunStrategy(Strategy):
                     "pipeline": "cwinpy-merge",
                     "event": run,
                     "needs": names,
-                    **self._tail(merge, "scheduler", "retry"),
+                    **self._job(merge, htcondor=on_this_machine),
                 }
             )
 
@@ -392,7 +413,8 @@ class RunStrategy(Strategy):
                         "pipeline": "cwinpy-pe",
                         "event": name,
                         "needs": [f"{run}/{merges[batch]}"],
-                        **self._tail(pe, "sampler", "scheduler", "retry"),
+                        **self._tail(pe, "sampler"),
+                        **self._job(pe, scheduler=transferred),
                         **({"cwinpy-pe": deepcopy(pe["settings"])} if pe.get("settings") else {}),
                     }
                 )
@@ -407,7 +429,7 @@ class RunStrategy(Strategy):
                     "needs": sorted(
                         f"{name}/pe" for members in batches.values() for name, _ in members
                     ),
-                    **self._tail(summary, "scheduler", "retry"),
+                    **self._job(summary, htcondor=on_this_machine),
                     **(
                         {"cwinpy-summary": deepcopy(summary["settings"])}
                         if summary.get("settings")

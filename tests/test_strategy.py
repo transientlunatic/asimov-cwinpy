@@ -711,6 +711,96 @@ class TestEphemeridesApplied:
         assert project.open().subject_names() == []
 
 
+class TestSharedFilesystem:
+    def documents(self, pars, **changes):
+        return by_name(expand(spec(pars, summary=True, **changes)))
+
+    def test_by_default_nothing_is_said_of_where_the_jobs_run_or_of_their_files(self, pars):
+        found = self.documents(pars)
+        for key in (
+            ("analysis", "O4a-heterodyne", "merge"),
+            ("analysis", "O4a-heterodyne", "summary"),
+            ("analysis", "J0001+0001", "pe"),
+        ):
+            assert "htcondor" not in found[key] and "scheduler" not in found[key]
+
+    def test_without_one_the_light_jobs_run_on_this_machine(self, pars):
+        found = self.documents(pars, **{"shared filesystem": False})
+        assert found[("analysis", "O4a-heterodyne", "merge")]["htcondor"] == {"universe": "local"}
+        assert found[("analysis", "O4a-heterodyne", "summary")]["htcondor"] == {"universe": "local"}
+
+    def test_without_one_the_parameter_estimation_has_its_files_transferred(self, pars):
+        found = self.documents(pars, **{"shared filesystem": False})
+        for pulsar in ("J0001+0001", "J0002+0002"):
+            assert found[("analysis", pulsar, "pe")]["scheduler"] == {"transfer files": True}
+
+    def test_the_shards_are_not_changed_because_cwinpy_transfers_their_files_itself(self, pars):
+        shared = self.documents(pars)
+        without = self.documents(pars, **{"shared filesystem": False})
+        for number in range(1, 6):
+            key = ("analysis", "O4a-heterodyne", f"shard-000{number}")
+            assert shared[key] == without[key]
+
+    def test_saying_that_there_is_one_is_the_default(self, pars):
+        assert self.documents(pars, **{"shared filesystem": True}) == self.documents(pars)
+
+    def test_what_the_blueprint_says_of_a_job_is_kept_and_added_to(self, pars):
+        found = self.documents(
+            pars,
+            **{
+                "shared filesystem": False,
+                "merge": {
+                    "scheduler": {"request memory": "8GB"},
+                    "htcondor": {"requirements": "R"},
+                },
+                "pe": {"scheduler": {"request memory": "4GB", "environment": "/cvmfs/x"}},
+            },
+        )
+        merge = found[("analysis", "O4a-heterodyne", "merge")]
+        assert merge["htcondor"] == {"universe": "local", "requirements": "R"}
+        assert merge["scheduler"] == {"request memory": "8GB"}
+        pe = found[("analysis", "J0001+0001", "pe")]
+        assert pe["scheduler"] == {
+            "transfer files": True,
+            "request memory": "4GB",
+            "environment": "/cvmfs/x",
+        }
+
+    def test_what_the_blueprint_says_overrides_the_default(self, pars):
+        found = self.documents(
+            pars,
+            **{
+                "shared filesystem": False,
+                "merge": {"htcondor": {"universe": "vanilla"}},
+                "pe": {"scheduler": {"transfer files": False}},
+            },
+        )
+        assert found[("analysis", "O4a-heterodyne", "merge")]["htcondor"] == {"universe": "vanilla"}
+        assert found[("analysis", "J0001+0001", "pe")]["scheduler"] == {"transfer files": False}
+
+    def test_the_shards_may_have_an_environment_and_requirements_of_their_own(self, pars):
+        found = self.documents(
+            pars,
+            heterodyne={
+                "scheduler": {"environment": "/cvmfs/software.igwn.org/conda/envs/igwn"},
+                "htcondor": {"requirements": "(HAS_CVMFS_software_igwn_org =?= True)"},
+            },
+        )
+        shard = found[("analysis", "O4a-heterodyne", "shard-0001")]
+        assert shard["scheduler"]["environment"].endswith("envs/igwn")
+        assert shard["htcondor"]["requirements"].startswith("(HAS_CVMFS")
+
+    def test_it_is_true_or_false(self, pars):
+        for bad in ("no", 0, None, []):
+            with pytest.raises(StrategyError, match="'shared filesystem' must be true or false"):
+                RunStrategy().validate(spec(pars, **{"shared filesystem": bad}))
+
+    def test_nothing_is_shared_between_the_documents(self, pars):
+        found = self.documents(pars, **{"shared filesystem": False})
+        found[("analysis", "J0001+0001", "pe")]["scheduler"]["x"] = 1
+        assert "x" not in found[("analysis", "J0002+0002", "pe")]["scheduler"]
+
+
 # The blueprint, applied by asimov to a project
 
 BLUEPRINT = """\

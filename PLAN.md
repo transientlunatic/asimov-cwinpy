@@ -379,6 +379,34 @@ no expected output, rather than an empty file, which would stop a shard from com
   and dynesty 3.2.0, which bilby cannot import (`apply_reflect`); dynesty 3.0.0 works. CI, on 3.11,
   has not been hit by this. Pin if it is.
 
+## What a cluster without a shared filesystem taught us
+
+An LDG pool: the execute nodes do not see `/home` (so no conda environment of a user, and a shebang
+pointing into it fails with "invalid interpreter"), there is no shared filesystem, `getenv` is not
+allowed, CVMFS is available, `universe = local` is allowed, and the project is in a home directory.
+
+- **Software comes from an environment the nodes see**, `[pipelines] environment` or
+  `scheduler: environment` (an IGWN CVMFS environment). Merge and summary instead run in the
+  local universe with the Python of asimov itself.
+- **Job options have no standard vocabulary** (`universe`, `requirements`, `getenv`), so the plugin owns an
+  `htcondor:` section (`jobs.py`); `scheduler: environment variables` becomes HTCondor's `environment`.
+- **PE is made relocatable**: with `scheduler: transfer files` every path in the config is relative to the
+  job directory; the `results` directory is sent in and returned (a held job results from a listed
+  but missing file, so it is made at build time and inputs are checked before submission).
+- **A real bug found by the emulator**: `cwinpy_pe` stops for a restart with bilby's exit code 130, not
+  the 77 that asimov takes as a restart. `exit_code: 77` is now set in the sampler kwargs by default.
+- `shared filesystem: false` in the strategy sets all of these defaults; what a block says is kept.
+- Tested with `tests/minitransfer.py`, an emulation of HTCondor's transfer (project hidden, empty
+  environment, checkpoint and resume) using the real `cwinpy_pe`.
+
+Unverified, needs the pool (user and Matt):
+
+- Directory transfer of `results` both ways, and `initialdir`.
+- `universe = local` with `sys.executable`.
+- cwinpy version agreement between the build (asimov's environment) and the run (CVMFS environment).
+- Whether the CVMFS environment is sufficient (e.g. `LAL_DATA_PATH`); the emulator set only PATH and TMPDIR.
+- Held jobs: the plugin cannot see them, so a held node stays quiet until looked at.
+
 ## Open questions
 
 - Does a heterodyne config for a sub-range of time reproduce the corresponding

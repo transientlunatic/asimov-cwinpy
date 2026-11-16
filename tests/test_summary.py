@@ -560,3 +560,37 @@ def test_the_report_of_asimov_shows_the_link_for_a_finished_summary(project, fil
         event = project.open().get_event("O4a-heterodyne")[0]
         html = event.html()
     assert "O4a-heterodyne/summary/html/home.html|cwinpy summary pages" in html
+
+
+# Where the job runs, and what it is given
+
+
+def test_the_job_does_not_ask_for_the_environment_of_asimov(project, files, tmp_path):
+    pipeline = configured(project, files, tmp_path)
+    scheduler = MagicMock()
+    scheduler.submit.return_value = 1
+    with patch.object(
+        SummaryPipeline, "scheduler", new_callable=PropertyMock, return_value=scheduler
+    ):
+        pipeline.submit_dag()
+    job = scheduler.submit.call_args[0][0].kwargs
+    assert "getenv" not in job and "universe" not in job and "environment" not in job
+
+
+def test_a_job_on_this_machine_is_local_and_runs_the_python_that_asimov_runs_in(
+    project, files, tmp_path
+):
+    import sys
+
+    pipeline = configured(project, files, tmp_path, extra="htcondor:\n  universe: local\n")
+    scheduler = MagicMock()
+    scheduler.submit.return_value = 1
+    with (
+        patch.object(
+            SummaryPipeline, "scheduler", new_callable=PropertyMock, return_value=scheduler
+        ),
+        patch("asimov_cwinpy.jobs.config.get", return_value="/cvmfs/software.igwn.org/x"),
+    ):
+        pipeline.submit_dag()
+    job = scheduler.submit.call_args[0][0]
+    assert job.kwargs["universe"] == "local" and job.executable == sys.executable

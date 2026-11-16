@@ -17,6 +17,7 @@ from asimov.scheduler_utils import create_job_from_dict
 from asimov.utils import set_directory
 
 from .common import CwinpyError, CwinpyPipeline
+from .jobs import executable_in, htcondor_options
 from .priors import CwinpyPriorInterface
 
 #: The asset of ``cwinpy-merge``: ``{pulsar: {detector: {factor: path}}}``.
@@ -205,17 +206,77 @@ class PEPipeline(CwinpyPipeline):
         """The file that ``cwinpy_pe`` writes when it has finished."""
         return os.path.join(self.output_directory(), f"{self.label()}_result.hdf5")
 
+    def transfers(self):
+        """
+        Whether HTCondor transfers the files of the job (``scheduler: transfer files``), for a
+        cluster whose execute nodes do not see the project: the job then runs in a directory of
+        its own, with its inputs copied there, and what it makes in ``results`` copied back.
+        """
+        return bool((self.production.meta.get("scheduler") or {}).get("transfer files"))
+
+    def _seen_by_job(self, path):
+        """A path as the job sees it: as it is, or, if the files are transferred, its name."""
+        return os.path.basename(path) if self.transfers() else path
+
+    def transfer_inputs(self, config_file, check=True):
+        """
+        The files that HTCondor copies to the node for the job, when it transfers files.
+
+        They are put in one directory, so they need different names. The directory of the results
+        is one of them: it is there from the start, so that the job never has an output that it did
+        not make, and it holds the checkpoint of a job that stopped itself to be started again.
+
+        Parameters
+        ----------
+        config_file : str
+            The configuration of ``cwinpy_pe``.
+        check : bool
+            Check that the files are there. HTCondor puts a job on hold, and does not fail it, if a
+            file that it is to transfer is not, which hides the problem.
+
+        Returns
+        -------
+        list of str
+
+        Raises
+        ------
+        PipelineException
+            If two of the files have the same name, or one of them is not there.
+        """
+        files = [config_file, self.prior_file(), self.production.meta["ephemeris"]]
+        if not self.fake():
+            for by_detector in self.data_files().values():
+                files.extend(by_detector.values())
+        files.append(self.output_directory())
+        names = [os.path.basename(path.rstrip(os.sep)) for path in files]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise PipelineException(
+                f"The files of the job of {self.production.name} are put in one directory, and "
+                f"{', '.join(repeated)} is the name of more than one of them.",
+                production=self.production.name,
+            )
+        missing = [path for path in files if check and not os.path.exists(path)]
+        if missing:
+            raise PipelineException(
+                f"HTCondor would hold the job of {self.production.name}, because {len(missing)} "
+                f"file(s) that it is to transfer are not there: {', '.join(missing)}.",
+                production=self.production.name,
+            )
+        return files
+
     def render_config(self):
         """
         The text of the configuration of ``cwinpy_pe``.
 
         Built here and not in the template: which options appear depends on the data,
-        and ``cwinpy_pe`` rejects options that it does not know.
+        and ``cwinpy_pe`` rejects options that it does not know. If HTCondor transfers the files
+        of the job, every path in it is the name of a file in the directory of the job.
         """
         sampler = self.production.meta.get("sampler") or {}
         settings = self.settings()
         lines = [
-            f"par-file = {self.production.meta['ephemeris']}",
+            f"par-file = {self._seen_by_job(self.production.meta['ephemeris'])}",
             f"detector = [{', '.join(self.interferometers())}]",
         ]
         if self.fake():
@@ -228,17 +289,27 @@ class PEPipeline(CwinpyPipeline):
                     lines.append(f"{key.replace(' ', '-')} = {settings[key]}")
         else:
             for factor, by_detector in self.data_files().items():
-                values = ", ".join(f"{d}:{path}" for d, path in by_detector.items())
+                values = ", ".join(
+                    f"{d}:{self._seen_by_job(path)}" for d, path in by_detector.items()
+                )
                 lines.append(f"{DATA_OPTIONS[factor]} = [{values}]")
         lines += [
-            f"prior = {self.prior_file()}",
-            f"outdir = {self.output_directory()}",
+            f"prior = {self._seen_by_job(self.prior_file())}",
+            f"outdir = {self._seen_by_job(self.output_directory())}",
             f"label = {self.label()}",
         ]
         if sampler.get("sampler"):
             lines.append(f"sampler = {sampler['sampler']}")
-        if sampler.get("sampler kwargs"):
-            lines.append(f"sampler-kwargs = {sampler['sampler kwargs']}")
+        kwargs = sampler.get("sampler kwargs") or {}
+        if isinstance(kwargs, dict):
+            # The sampler writes its checkpoint and stops with this code when it is told to (after
+            # `periodic restart time`, or by a signal), which is how asimov knows that it is to be
+            # started again. bilby's own code for it is 130, which asimov would take for a failure.
+            # (cwinpy's own pipeline does the same.)
+            kwargs = {**kwargs}
+            kwargs.setdefault("exit_code", RESTART_CODE)
+        if kwargs:
+            lines.append(f"sampler-kwargs = {kwargs}")
         restart = (self.production.meta.get("scheduler") or {}).get("periodic restart time")
         if restart is not None:
             lines.append(f"periodic-restart-time = {restart}")
@@ -253,18 +324,24 @@ class PEPipeline(CwinpyPipeline):
 
     def _executable(self):
         """
-        The ``cwinpy_pe`` that will be run: the analysis's own ``executable``, else the one in
-        the environment of the project's pipelines, else the one on the path.
+        The ``cwinpy_pe`` that will be run: the analysis's own ``executable``, else the one in the
+        software environment of the analysis (``scheduler: environment``, or ``[pipelines]
+        environment`` of the project), else the one on the path.
+
+        Raises
+        ------
+        PipelineException
+            If there is none. One that was asked for is not replaced by another that happens to be
+            on the path: it is not the software that was chosen.
         """
-        try:
-            default = os.path.join(config.get("pipelines", "environment"), "bin", "cwinpy_pe")
-        except Exception:
-            default = "cwinpy_pe"
-        executable = self.production.meta.get("executable", default)
-        found = shutil.which(executable) or shutil.which("cwinpy_pe")
+        asked = self.production.meta.get("executable") or executable_in(
+            self.production, "cwinpy_pe"
+        )
+        found = shutil.which(asked or "cwinpy_pe")
         if found is None:
             raise PipelineException(
-                "Cannot find the cwinpy_pe executable.", production=self.production.name
+                f"Cannot find the cwinpy_pe executable{f' ({asked})' if asked else ''}.",
+                production=self.production.name,
             )
         return found
 
@@ -286,6 +363,8 @@ class PEPipeline(CwinpyPipeline):
             )
         if not dryrun:
             os.makedirs(rundir, exist_ok=True)
+            if self.transfers():
+                os.makedirs(self.output_directory(), exist_ok=True)
             with open(self.prior_file(), "w") as handle:
                 handle.write(self.render_priors())
 
@@ -316,7 +395,7 @@ class PEPipeline(CwinpyPipeline):
         """
         config_file = self.build_dag(dryrun=dryrun)
         rundir = self.production.rundir
-        command = [self._executable(), "--config", config_file]
+        command = [self._executable(), "--config", self._seen_by_job(config_file)]
         asked = self.production.meta.get("scheduler", {}) or {}
         description = {
             "executable": command[0],
@@ -327,9 +406,21 @@ class PEPipeline(CwinpyPipeline):
             "request_cpus": str(asked.get("request cpus", 1)),
             "request_memory": str(asked.get("request memory", "4096MB")),
             "request_disk": str(asked.get("request disk", "4096MB")),
-            "getenv": "true",
             "batch_name": f"cwinpy-pe/{self.production.event.name}/{self.production.name}",
+            **htcondor_options(self.production),
         }
+        if self.transfers():
+            description.update(
+                {
+                    "should_transfer_files": "YES",
+                    "when_to_transfer_output": "ON_EXIT_OR_EVICT",
+                    "transfer_input_files": ", ".join(
+                        self.transfer_inputs(config_file, check=not dryrun)
+                    ),
+                    "transfer_output_files": os.path.basename(self.output_directory()),
+                    "initialdir": rundir,
+                }
+            )
         accounting = asked.get("accounting group")
         if accounting:
             description["accounting_group"] = accounting

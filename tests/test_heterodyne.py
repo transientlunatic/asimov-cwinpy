@@ -322,6 +322,42 @@ def test_cwinpy_finds_its_executables_in_the_environment_of_the_pipelines(
     assert os.environ["PATH"] == before
 
 
+def test_the_environment_of_the_analysis_is_the_one_cwinpy_is_built_in_and_writes_into_the_jobs(
+    project, tmp_path, fake_cwinpy
+):
+    mine = tmp_path / "mine"
+    theirs = tmp_path / "theirs"
+    for directory in (mine, theirs):
+        (directory / "bin").mkdir(parents=True)
+    pipeline = configured(project, tmp_path, extra_analysis=f"scheduler:\n  environment: {mine}\n")
+    with patch("asimov_cwinpy.heterodyne.config.get", return_value=str(theirs)):
+        pipeline.build_dag()
+    assert fake_cwinpy.observed_path[0].startswith(str(mine / "bin"))
+    assert str(theirs / "bin") not in fake_cwinpy.observed_path[0]
+
+
+def test_an_environment_that_is_not_there_is_not_put_on_the_path(project, tmp_path, fake_cwinpy):
+    pipeline = configured(
+        project, tmp_path, extra_analysis=f"scheduler:\n  environment: {tmp_path / 'nothing'}\n"
+    )
+    before = os.environ["PATH"]
+    pipeline.build_dag()
+    assert fake_cwinpy.observed_path[0] == before
+
+
+def test_the_requirements_of_the_ledger_are_given_to_the_jobs_of_cwinpy(project):
+    pipeline = make(
+        project,
+        extra_analysis="htcondor:\n  requirements: (HAS_CVMFS_software_igwn_org =?= True)\n",
+    )
+    section = pipeline.runner_config()["heterodyne_dag"]
+    assert section["requirements"] == "(HAS_CVMFS_software_igwn_org =?= True)"
+
+
+def test_there_are_no_requirements_unless_the_ledger_says_so(project):
+    assert "requirements" not in make(project).runner_config()["heterodyne_dag"]
+
+
 def test_a_dry_run_builds_nothing(project, tmp_path, fake_cwinpy):
     pipeline = configured(project, tmp_path)
     pipeline.build_dag(dryrun=True)
