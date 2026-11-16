@@ -24,9 +24,13 @@ strategy:
   data end: 1369062018
   joblength: 21600                 # 6 hours: short jobs, so that a failed one is quickly run again
   shards: {count: 2}
+  # Two bright pulsars, by name: their ephemerides are fetched once from the ATNF catalogue (needs
+  # `psrqpy` and the network) into `ephemerides/` in the project, and used from there. They say where a
+  # pulsar is, and are not timing solutions that follow its phase through a run, so this is for trying
+  # the plugin. Put your own file at `ephemerides/<name>.par` first and it is used and not fetched.
   pulsars:
-    - /path/to/J0534+2200.par
-    - /path/to/J0537-6910.par
+    - {name: J0534+2200, source: atnf}
+    - {name: J0537-6910, source: atnf}
   heterodyne:
     data:
       channels: {H1: "H1:GDS-CALIB_STRAIN", L1: "L1:GDS-CALIB_STRAIN"}

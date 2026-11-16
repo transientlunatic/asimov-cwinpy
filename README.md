@@ -57,22 +57,42 @@ strategy:
   data start: 1368975618
   data end: 1380000000
   shards: {count: 40}            # or {length: seconds}
-  pulsars: [/path/to/J0534+2200.par, /path/to/J0537-6910.par]
+  pulsars: [/path/to/timing-solutions, {name: J0534+2200, source: atnf}]   # a directory; a name
   heterodyne: {data: {...}, retry: {attempts: 10, delay: 3600}}
 ```
 
 | Option | |
 |---|---|
 | `interferometers`, `data start`, `data end`, `shards`, `pulsars` | Required. `frequency factors` defaults to `[1, 2]`; `run` names the run subject (default `<name>-heterodyne`); `joblength` is the length of data one job reads (default a day). |
+| `ephemeris directory` | Where ephemerides that are fetched are put (`ephemerides`, in the project, unless it says). |
 | `heterodyne` | `data`, `scheduler` and `retry` go on every shard as they are; `settings` goes under `cwinpy-heterodyne:` (`strict data requirement`, `segment lists`, ...). |
 | `merge` | `scheduler`, `retry`. |
 | `pe` | `sampler`, `scheduler`, `retry` go on each parameter estimation; `priors` on each pulsar; `settings` under `cwinpy-pe:`. |
 | `summary` | Optional. `true`, or a mapping of `settings` (under `cwinpy-summary:`), `scheduler` and `retry`: adds the `summary` analysis, which needs the parameter estimation of every pulsar. |
 
 A shard is a whole number of jobs, so `shards: {count: 40}` makes about 40 (fewer if there are
-fewer jobs), with the last one short. Pulsars are named by the `PSRJ` of their `.par` file, or
-by `name:` if the entry is a mapping. Every name comes from the blueprint alone, so applying it
+fewer jobs), with the last one short. Every name comes from the blueprint alone, so applying it
 again changes nothing that exists, and an error applies nothing.
+
+**Where the ephemerides come from.** An entry of `pulsars` is:
+
+| Entry | Pulsars |
+|---|---|
+| `/path/to/J0534+2200.par` | that file, named by its `PSRJ` (or `PSR`, or `NAME`) |
+| `/path/to/directory` | every `.par` file in it and under it, in the order of their paths, each named by its `PSRJ` |
+| `{ephemeris: <file or directory>, batch: late, name: ...}` | the same, in a batch; `name` overrides the name of a file (not of a directory) |
+| `{name: J0534+2200, source: atnf}` | the pulsar's entry in the ATNF pulsar catalogue, fetched once with `psrqpy` |
+
+A pulsar from the catalogue is written to `<ephemeris directory>/<name>.par`, with
+`<name>.atnf.json` that says which version of the catalogue and of `psrqpy` it was, and then used
+from there: **a file that is already there is used and not fetched**, so applying the blueprint again
+needs no network, and a timing solution of your own put there first is not replaced. The options are
+checked without the network; only applying fetches, and a pulsar that is not in the catalogue stops it
+before anything is applied. **The catalogue's ephemerides are not for a result**: they say where a
+pulsar is, and are not timing solutions that follow its phase through a run, so asimov warns when
+they are used. Use them to try the plugin. For a run, give the timing solutions as files or a
+directory. Do not add files to a directory that is already in a blueprint to add pulsars: what was
+listed before is not changed, so they would be given no data (use a batch).
 
 **Pulsars added later** are given a `batch` (`{ephemeris: ..., batch: late}`). A batch has shards
 (`late-shard-0001` ...) and a merge (`merge-late`) of its own, over the same span, so the data of
@@ -90,7 +110,7 @@ has been timed on a pool yet, so the sizes below are in what they read and run, 
 |---|---|---|
 | The code, with no pool | `pytest tests/test_chain_cwinpy.py` (needs cwinpy) | fake frames, 2 shards, a merge, a PE: about 1.5 minutes |
 | The parameter estimation alone, on a pool | [`examples/pulsar-simulated.yaml`](examples/pulsar-simulated.yaml) | no data at all: simulated noise |
-| The whole chain, small | [`examples/test-run.yaml`](examples/test-run.yaml) | one day of data, two pulsars, one frequency factor, 6-hour jobs: 8 heterodyne jobs, 1 merge, 2 PEs |
+| The whole chain, small | [`examples/test-run.yaml`](examples/test-run.yaml) | one day of data, two pulsars (by name, from the ATNF catalogue: nothing to fill in but the project), one frequency factor, 6-hour jobs: 8 heterodyne jobs, 1 merge, 2 PEs |
 | A whole run | [`examples/whole-run.yaml`](examples/whole-run.yaml) | the span of the run: days x detectors x factors heterodyne jobs, and a PE for each pulsar |
 
 To make a run smaller, change the blueprint and nothing else: a shorter `data start` to `data end`
