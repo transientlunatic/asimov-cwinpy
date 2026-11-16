@@ -341,6 +341,73 @@ def test_a_problem_cwinpy_finds_is_reported(project, tmp_path, fake_cwinpy):
             pipeline.build_dag()
 
 
+def no_segments(detector="H1"):
+    return patch.object(
+        FakeRunner,
+        "__init__",
+        side_effect=ValueError(f"No science data segments exist for {detector}"),
+    )
+
+
+def test_a_shard_with_no_science_data_for_a_detector_says_which_span_and_which_flag(
+    project, tmp_path, fake_cwinpy
+):
+    pipeline = configured(project, tmp_path, cache=False)
+    with no_segments("H1"), pytest.raises(PipelineException) as error:
+        pipeline.build_dag()
+    said = str(error.value)
+    assert said.startswith("cwinpy could not make the DAG: No science data segments exist for H1")
+    assert "shard-0001" in said
+    assert "GPS 1000000000 to 1000002048" in said
+    assert "no science data for H1 in the flag H1:DMT-ANALYSIS_READY:1" in said
+
+
+def test_it_gives_the_span_in_utc_if_astropy_is_there(project, tmp_path, fake_cwinpy):
+    pytest.importorskip("astropy")
+    pipeline = configured(project, tmp_path)
+    with no_segments(), pytest.raises(PipelineException, match="2011-09-14 01:46:25 UTC"):
+        pipeline.build_dag()  # GPS 1000000000 is 2011-09-14 01:46:25 UTC
+
+
+def test_it_gives_the_span_in_gps_alone_if_astropy_is_not_there(
+    project, tmp_path, fake_cwinpy, monkeypatch
+):
+    monkeypatch.setitem(sys.modules, "astropy", None)
+    monkeypatch.setitem(sys.modules, "astropy.time", None)
+    pipeline = configured(project, tmp_path)
+    with no_segments(), pytest.raises(PipelineException) as error:
+        pipeline.build_dag()
+    assert "GPS 1000000000 to 1000002048, has no science data" in str(error.value)
+    assert "UTC" not in str(error.value)
+
+
+def test_it_names_the_segment_list_when_the_segments_are_in_files(project, tmp_path, fake_cwinpy):
+    pipeline = configured(project, tmp_path)
+    with (
+        no_segments("L1"),
+        pytest.raises(PipelineException, match="for L1 in the segment list /segs/L1.txt"),
+    ):
+        pipeline.build_dag()
+
+
+def test_it_says_what_can_be_done_about_it(project, tmp_path, fake_cwinpy):
+    pipeline = configured(project, tmp_path)
+    with no_segments("H1"), pytest.raises(PipelineException) as error:
+        pipeline.build_dag()
+    said = str(error.value)
+    assert "a span in which H1 was observing" in said
+    assert "`shards: {count: ...}`" in said
+    assert "leave H1 out of `interferometers`" in said
+
+
+def test_another_problem_is_reported_as_cwinpy_said_it(project, tmp_path, fake_cwinpy):
+    pipeline = configured(project, tmp_path)
+    with patch.object(FakeRunner, "__init__", side_effect=ValueError("something else")):
+        with pytest.raises(PipelineException) as error:
+            pipeline.build_dag()
+    assert str(error.value) == "cwinpy could not make the DAG: something else"
+
+
 def test_building_without_a_configuration_is_an_error(project, tmp_path, fake_cwinpy):
     pipeline = configured(project, tmp_path)
     pipeline.production.event.repository.find_prods.return_value = []

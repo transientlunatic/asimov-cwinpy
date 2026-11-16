@@ -260,6 +260,27 @@ Found by running cwinpy, not from its documentation:
   this plugin (a directory, or later a URL, would do it).
 - Mutation testing: 31 breaks of the new code, all caught (two did not apply at first, and were redone).
 
+## What a shard with no science data for a detector taught us
+
+- **cwinpy's DAG build is all or nothing per shard.** With segments from a flag it queries each detector's
+  science segments for the whole span of the shard and raises `ValueError: No science data segments exist
+  for H1` if any one detector has none (`create_dag` in `cwinpy/heterodyne/heterodyne.py`). So a shard
+  in which one detector was down for its whole span fails, though the other detector has data; and a
+  shard in which all were down fails too. The first real trial hit it: the small example split one day
+  into two half-day shards, and a detector was not observing in one of the halves. (I had chosen the
+  dates without checking, which the example said to do and did not do itself.)
+- **Done:** the message names the shard, the span (GPS and UTC), the flag or segment list, and what can
+  be done; the small example is one shard; the README says how to find a day with both detectors.
+- **Not done, and a decision to make:** carrying on without the detector in that shard. It would keep a
+  real run going across a break of one detector, but it would also hide a mistyped flag (every shard would
+  quietly lose that detector). A way to do it that does not hide it: drop a detector only when another
+  detector of the shard has segments (so the flag and the server work), record `omitted detectors` in
+  the analysis and say so in the monitor; the parameter estimation then still fails clearly if a
+  detector has no data at all (`lacks L1 at 2f`). A shard in which *all* detectors were down would still
+  fail, and is given up on with the retry policy's `on failure: skip`.
+- I could not look up segments here: gwosc.org is not reachable from the container that this was
+  written in, so the dates of the example are still unverified, and the README says where to find good ones.
+
 ## What the summary pages taught us
 
 - **cwinpy makes pages for a set of pulsars, from the configuration of its own pipeline** (`pe_pipeline(config,

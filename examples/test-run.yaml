@@ -3,7 +3,7 @@
 #
 #   asimov apply -f examples/test-run.yaml
 #
-# What it makes: two shards of half a day (each of two 6-hour jobs for each detector), the merge,
+# What it makes: one shard of the day (four 6-hour jobs for each detector), the merge,
 # and for each pulsar a parameter estimation. That is 8 heterodyne jobs, 1 merge job and 2
 # `cwinpy_pe` jobs, and every job reads at most 6 hours of data. The cost is the frame reading,
 # which is about one day of each detector's strain channel, and that is the same however it is
@@ -23,7 +23,9 @@ strategy:
   data start: 1368975618           # one day from the start of O4
   data end: 1369062018
   joblength: 21600                 # 6 hours: short jobs, so that a failed one is quickly run again
-  shards: {count: 2}
+  # One shard: cwinpy makes the DAG of a shard only if every detector has some science data in the
+  # whole span of it, and two half-days would need both detectors to be observing in both halves.
+  shards: {count: 1}
   # Two bright pulsars, by name: their ephemerides are fetched once from the ATNF catalogue (needs
   # `psrqpy` and the network) into `ephemerides/` in the project, and used from there. They say where a
   # pulsar is, and are not timing solutions that follow its phase through a run, so this is for trying
