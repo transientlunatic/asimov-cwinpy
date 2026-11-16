@@ -34,10 +34,13 @@ pulsars that are already done is not made again.
 """
 
 import math
+import os
 import re
 from copy import deepcopy
 
 from asimov.strategies import Strategy, StrategyError
+
+from .ephemerides import DIRECTORY, atnf_path, ensure_atnf, par_files, pulsar_name
 
 #: The length of the data that one job of a shard reads, if the blueprint does not say
 #: (cwinpy's default).
@@ -56,6 +59,7 @@ OPTIONS = {
     "joblength",
     "shards",
     "pulsars",
+    "ephemeris directory",
     "heterodyne",
     "merge",
     "pe",
@@ -66,33 +70,10 @@ MERGE_OPTIONS = {"scheduler", "retry"}
 PE_OPTIONS = {"settings", "sampler", "priors", "scheduler", "retry"}
 SUMMARY_OPTIONS = {"settings", "scheduler", "retry"}
 
-#: The line of a ``.par`` file that names the pulsar, in the order that cwinpy prefers.
-_NAME = re.compile(r"^\s*(PSRJ|PSR|NAME)\s+(\S+)", re.IGNORECASE)
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
 
-
-def pulsar_name(path):
-    """
-    The name of the pulsar in a ``.par`` file: its ``PSRJ``, else ``PSR``, else ``NAME``.
-
-    Raises
-    ------
-    StrategyError
-        If the file cannot be read or names no pulsar.
-    """
-    try:
-        with open(path) as handle:
-            found = {}
-            for line in handle:
-                match = _NAME.match(line)
-                if match:
-                    found.setdefault(match.group(1).upper(), match.group(2))
-    except OSError as error:
-        raise StrategyError(f"The ephemeris {path} cannot be read: {error}.") from error
-    for key in ("PSRJ", "PSR", "NAME"):
-        if key in found:
-            return found[key]
-    raise StrategyError(f"The ephemeris {path} does not name its pulsar (PSRJ).")
+#: What a mapping that is a pulsar may have.
+ENTRY_KEYS = {"ephemeris", "batch", "name", "source"}
 
 
 def _positive_int(value, what):
@@ -167,6 +148,9 @@ class RunStrategy(Strategy):
         _mapping(spec, "merge", MERGE_OPTIONS)
         _mapping(spec, "pe", PE_OPTIONS)
         self.summary(spec)
+        directory = spec.get("ephemeris directory", DIRECTORY)
+        if not isinstance(directory, str) or not directory:
+            raise StrategyError("'ephemeris directory' must be a path.")
         self.pulsars(spec)
 
     @staticmethod
@@ -226,50 +210,102 @@ class RunStrategy(Strategy):
             return {}
         return _mapping(spec, "summary", SUMMARY_OPTIONS)
 
-    def pulsars(self, spec):
+    def pulsars(self, spec, fetch=False, logger=None):
         """
         The pulsars of the run.
+
+        Parameters
+        ----------
+        spec : dict
+            The ``strategy`` block.
+        fetch : bool
+            Fetch the ephemerides that are from the ATNF catalogue and are not in the project
+            yet. Otherwise only where they will be is worked out, so that the options can be
+            checked without the network.
+        logger : logging.Logger, optional
+            Where to say what was fetched.
 
         Returns
         -------
         dict
             ``{batch: [(name, ephemeris), ...]}``, with the pulsars of a batch in the order
-            that they were listed.
+            that they were listed (those of a directory in the order of their paths).
 
         Raises
         ------
         StrategyError
-            If an entry is not understood, a name is used twice, or a file cannot be read.
+            If an entry is not understood, a name is used twice, a file or directory cannot be
+            read, or an ephemeris cannot be fetched.
         """
         entries = spec["pulsars"]
         if not isinstance(entries, list):
             raise StrategyError("'pulsars' must be a list.")
+        directory = spec.get("ephemeris directory", DIRECTORY)
         batches, seen = {}, {}
         for entry in entries:
-            if isinstance(entry, str):
-                path, batch, name = entry, MAIN, None
-            elif isinstance(entry, dict) and set(entry) <= {"ephemeris", "batch", "name"}:
-                if not isinstance(entry.get("ephemeris"), str):
-                    raise StrategyError(f"A pulsar needs its 'ephemeris': {entry!r}.")
-                path, batch, name = entry["ephemeris"], entry.get("batch", MAIN), entry.get("name")
-            else:
-                raise StrategyError(
-                    f"A pulsar is a file name, or a mapping of ephemeris, batch and name, "
-                    f"not {entry!r}."
-                )
-            name = name or pulsar_name(path)
-            for label, text in (("pulsar", name), ("batch", batch)):
-                if not isinstance(text, str) or not _SAFE.match(text):
-                    raise StrategyError(
-                        f"The {label} name {text!r} is not usable: it has to start with a letter "
-                        "or digit and have only letters, digits, and _ . + - after."
+            for name, path, batch in self._entry(entry, directory, fetch, logger):
+                for label, text in (("pulsar", name), ("batch", batch)):
+                    self._check_name(label, text)
+                if name in seen:
+                    where = (
+                        "twice" if seen[name] == batch else f"in batches {seen[name]} and {batch}"
                     )
-            if name in seen:
-                where = "twice" if seen[name] == batch else f"in batches {seen[name]} and {batch}"
-                raise StrategyError(f"The pulsar {name} is listed {where}.")
-            seen[name] = batch
-            batches.setdefault(batch, []).append((name, path))
+                    raise StrategyError(f"The pulsar {name} is listed {where}.")
+                seen[name] = batch
+                batches.setdefault(batch, []).append((name, path))
         return batches
+
+    @staticmethod
+    def _check_name(label, text):
+        if not isinstance(text, str) or not _SAFE.match(text):
+            raise StrategyError(
+                f"The {label} name {text!r} is not usable: it has to start with a letter "
+                "or digit and have only letters, digits, and _ . + - after."
+            )
+
+    @classmethod
+    def _entry(cls, entry, directory, fetch, logger):
+        """
+        The ``(name, ephemeris, batch)`` of each pulsar that one entry of ``pulsars`` is.
+
+        An entry is a file, a directory (of ``.par`` files, which is each of them), or a mapping
+        of ``ephemeris`` (a file or directory), ``batch`` and ``name``, or of ``name`` and
+        ``source: atnf``, for a pulsar from the ATNF catalogue.
+        """
+        if isinstance(entry, str):
+            path, batch, name, source = entry, MAIN, None, "file"
+        elif isinstance(entry, dict) and set(entry) <= ENTRY_KEYS:
+            path, batch, name = entry.get("ephemeris"), entry.get("batch", MAIN), entry.get("name")
+            source = entry.get("source", "file")
+        else:
+            raise StrategyError(
+                f"A pulsar is a file name, or a directory of them, or a mapping of ephemeris, "
+                f"batch and name, or of name and source, not {entry!r}."
+            )
+        if source == "atnf":
+            if path is not None:
+                raise StrategyError(
+                    f"A pulsar from the ATNF catalogue has no 'ephemeris': {entry!r}."
+                )
+            if not isinstance(name, str):
+                raise StrategyError(
+                    f"A pulsar from the ATNF catalogue needs its 'name': {entry!r}."
+                )
+            cls._check_name("pulsar", name)  # (it is a file name)
+            found = ensure_atnf(name, directory, logger) if fetch else atnf_path(name, directory)
+            return [(name, found, batch)]
+        if source != "file":
+            raise StrategyError(f"The source of a pulsar is 'file' or 'atnf', not {source!r}.")
+        if not isinstance(path, str):
+            raise StrategyError(f"A pulsar needs its 'ephemeris': {entry!r}.")
+        if os.path.isdir(path):
+            if name:
+                raise StrategyError(
+                    f"A name cannot be given to a directory of ephemerides ({path}): "
+                    "each is named by its PSRJ."
+                )
+            return [(pulsar_name(file), file, batch) for file in par_files(path)]
+        return [(name or pulsar_name(path), path, batch)]
 
     # What it makes
 
@@ -287,7 +323,13 @@ class RunStrategy(Strategy):
         heterodyne = _mapping(spec, "heterodyne", HETERODYNE_OPTIONS)
         merge = _mapping(spec, "merge", MERGE_OPTIONS)
         pe = _mapping(spec, "pe", PE_OPTIONS)
-        batches = self.pulsars(spec)
+        batches = self.pulsars(spec, fetch=True, logger=context.logger)
+        if any(isinstance(e, dict) and e.get("source") == "atnf" for e in spec["pulsars"]):
+            context.logger.warning(
+                "Some ephemerides are from the ATNF pulsar catalogue, which are not timing "
+                "solutions that follow the phase of a pulsar through a run: use them to try the "
+                "plugin, not for a result."
+            )
         ranges = shard_ranges(spec["data start"], spec["data end"], joblength, spec["shards"])
 
         documents = [

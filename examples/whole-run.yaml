@@ -19,10 +19,14 @@ strategy:
   # `{length: <seconds>}` for shards of at least that long.
   shards: {count: 40}
   pulsars:
-    # The name of each pulsar is its PSRJ.
-    - /path/to/J0534+2200.par
-    - /path/to/J0537-6910.par
-    # - {ephemeris: /path/to/J1939+2134.par, batch: late-additions}
+    # A directory is every .par file in it and under it, and each pulsar is named by its PSRJ. (The
+    # path is a placeholder: use the directory of the timing solutions of the run.) A file is
+    # `/path/to/J0534+2200.par`, and a pulsar by name from the ATNF catalogue, for a test only, is
+    # `{name: J0534+2200, source: atnf}`.
+    - /path/to/timing-solutions
+    # Pulsars added later are another batch. Do not add them to the directory above: what was
+    # listed before is not changed, so they would be given no data.
+    # - {ephemeris: /path/to/more-timing-solutions, batch: late-additions}
   heterodyne:
     data:
       channels: {H1: "H1:GDS-CALIB_STRAIN", L1: "L1:GDS-CALIB_STRAIN"}

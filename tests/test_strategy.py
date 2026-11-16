@@ -1,6 +1,7 @@
 """The ``cwinpy-run`` strategy: one blueprint for a whole run."""
 
 import copy
+import os
 
 import pytest
 import yaml
@@ -186,8 +187,10 @@ class TestValidation:
         )
 
     def test_an_entry_that_is_not_understood(self, pars):
-        self.check(pars, "file name, or a mapping", pulsars=[3])
-        self.check(pars, "file name, or a mapping", pulsars=[{"ephemeris": "x", "color": 1}])
+        self.check(pars, "file name, or a directory of them", pulsars=[3])
+        self.check(
+            pars, "file name, or a directory of them", pulsars=[{"ephemeris": "x", "color": 1}]
+        )
         self.check(pars, "needs its 'ephemeris'", pulsars=[{"batch": "x"}])
 
     def test_a_missing_ephemeris_is_found_at_validation(self, pars, tmp_path):
@@ -456,6 +459,256 @@ class TestSummary:
         pulsars = [pars["J0001+0001"], {"ephemeris": pars["J0003+0003"], "batch": "summary"}]
         names = self.names(expand(spec(pars, pulsars=pulsars, summary=True)))
         assert len(names) == len(set(names))
+
+
+@pytest.fixture
+def atnf(monkeypatch, tmp_path):
+    """The ATNF catalogue (it says which pulsars were asked for); the project is tmp_path."""
+    from asimov_cwinpy import ephemerides
+
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def fetch(name):
+        calls.append(name)
+        if name == "J9999+9999":
+            raise StrategyError("The ATNF catalogue has no pulsar J9999+9999.")
+        return f"PSRJ {name}\nF0 10\nPEPOCH 55000\n", "2.9.0", "1.3.3"
+
+    monkeypatch.setattr(ephemerides, "fetch_atnf", fetch)
+    return calls
+
+
+def crab(**changes):
+    return {"name": "J0534+2200", "source": "atnf", **changes}
+
+
+class TestDirectories:
+    def directory(self, tmp_path, *names, where="pulsars"):
+        root = tmp_path / where
+        for name in names:
+            path = root / f"{name}.par"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"PSRJ {name.split('/')[-1]}\nF0 10\n")
+        return str(root)
+
+    def test_every_pulsar_in_a_directory_is_a_pulsar_named_by_its_psrj(self, pars, tmp_path):
+        root = self.directory(tmp_path, "b-file", "a-file")
+        # the names of the files are not the names of the pulsars
+        (tmp_path / "pulsars" / "a-file.par").write_text("PSRJ J0001+0001\n")
+        (tmp_path / "pulsars" / "b-file.par").write_text("PSRJ J0002+0002\n")
+        found = by_name(expand(spec(pars, pulsars=[root])))
+        assert ("analysis", "J0001+0001", "pe") in found and (
+            "analysis",
+            "J0002+0002",
+            "pe",
+        ) in found
+        assert found[("event", None, "J0001+0001")]["ephemeris"] == os.path.join(root, "a-file.par")
+
+    def test_the_directories_under_it_are_searched(self, pars, tmp_path):
+        root = self.directory(tmp_path, "J0001+0001", "deeper/J0002+0002", "deeper/more/J0003+0003")
+        found = by_name(expand(spec(pars, pulsars=[root])))
+        assert {n for (k, e, n) in found if k == "event" and n.startswith("J0")} == {
+            "J0001+0001",
+            "J0002+0002",
+            "J0003+0003",
+        }
+
+    def test_the_pulsars_are_in_the_order_of_their_paths(self, pars, tmp_path):
+        root = self.directory(tmp_path, "J0003+0003", "J0001+0001", "J0002+0002")
+        shard = next(d for d in expand(spec(pars, pulsars=[root])) if d["name"] == "shard-0001")
+        assert [os.path.basename(f) for f in shard["cwinpy-heterodyne"]["ephemerides"]] == [
+            "J0001+0001.par",
+            "J0002+0002.par",
+            "J0003+0003.par",
+        ]
+
+    def test_a_directory_is_a_batch_like_any_other_entry(self, pars, tmp_path):
+        root = self.directory(tmp_path, "J0003+0003", where="late")
+        found = by_name(
+            expand(spec(pars, pulsars=[pars["J0001+0001"], {"ephemeris": root, "batch": "late"}]))
+        )
+        assert ("analysis", "O4a-heterodyne", "late-shard-0001") in found
+        assert found[("analysis", "J0003+0003", "pe")]["needs"] == ["O4a-heterodyne/merge-late"]
+        assert found[("analysis", "J0001+0001", "pe")]["needs"] == ["O4a-heterodyne/merge"]
+
+    def test_a_directory_and_a_file_together(self, pars, tmp_path):
+        root = self.directory(tmp_path, "J0003+0003")
+        found = by_name(expand(spec(pars, pulsars=[pars["J0001+0001"], root])))
+        assert {n for (k, e, n) in found if k == "analysis" and n == "pe"} == {"pe"}
+        assert ("event", None, "J0001+0001") in found and ("event", None, "J0003+0003") in found
+
+    def test_a_pulsar_in_a_directory_and_listed_again_is_listed_twice(self, pars, tmp_path):
+        root = self.directory(tmp_path, "J0001+0001")
+        with pytest.raises(StrategyError, match=r"J0001\+0001 is listed twice"):
+            RunStrategy().validate(spec(pars, pulsars=[root, pars["J0001+0001"]]))
+
+    def test_a_name_cannot_be_given_to_a_directory(self, pars, tmp_path):
+        root = self.directory(tmp_path, "J0003+0003")
+        with pytest.raises(StrategyError, match="A name cannot be given to a directory"):
+            RunStrategy().validate(spec(pars, pulsars=[{"ephemeris": root, "name": "x"}]))
+
+    def test_a_directory_with_no_ephemeris_is_an_error_that_names_it(self, pars, tmp_path):
+        (tmp_path / "empty").mkdir()
+        with pytest.raises(StrategyError, match="no .par file in the directory .*empty"):
+            RunStrategy().validate(spec(pars, pulsars=[str(tmp_path / "empty")]))
+
+    def test_one_file_that_does_not_name_its_pulsar_stops_it_and_names_the_file(
+        self, pars, tmp_path
+    ):
+        root = self.directory(tmp_path, "J0001+0001")
+        (tmp_path / "pulsars" / "bad.par").write_text("F0 1\n")
+        with pytest.raises(StrategyError, match="bad.par does not name its pulsar"):
+            RunStrategy().validate(spec(pars, pulsars=[root]))
+
+    def test_the_result_does_not_change_if_it_is_asked_again(self, pars, tmp_path):
+        root = self.directory(tmp_path, "J0001+0001", "J0002+0002")
+        assert expand(spec(pars, pulsars=[root])) == expand(spec(pars, pulsars=[root]))
+
+
+class TestAtnf:
+    def test_a_pulsar_by_name_is_fetched_into_the_ephemeris_directory_of_the_project(
+        self, pars, atnf, tmp_path
+    ):
+        found = by_name(expand(spec(pars, pulsars=[crab()])))
+        path = str(tmp_path / "ephemerides" / "J0534+2200.par")
+        assert found[("event", None, "J0534+2200")]["ephemeris"] == path
+        assert open(path).read().startswith("PSRJ J0534+2200")
+        shard = found[("analysis", "O4a-heterodyne", "shard-0001")]
+        assert shard["cwinpy-heterodyne"]["ephemerides"] == [path]
+        assert atnf == ["J0534+2200"]
+
+    def test_the_options_are_checked_without_the_network(self, pars, atnf, tmp_path):
+        RunStrategy().validate(spec(pars, pulsars=[crab()]))
+        assert atnf == [] and not (tmp_path / "ephemerides").exists()
+
+    def test_it_is_fetched_once_however_often_it_is_expanded(self, pars, atnf):
+        first = expand(spec(pars, pulsars=[crab()]))
+        assert expand(spec(pars, pulsars=[crab()])) == first
+        assert atnf == ["J0534+2200"]
+
+    def test_the_directory_can_be_chosen(self, pars, atnf, tmp_path):
+        found = by_name(
+            expand(spec(pars, pulsars=[crab()], **{"ephemeris directory": "timing/atnf"}))
+        )
+        path = str(tmp_path / "timing" / "atnf" / "J0534+2200.par")
+        assert found[("event", None, "J0534+2200")]["ephemeris"] == path and os.path.exists(path)
+        elsewhere = str(tmp_path / "elsewhere")
+        found = by_name(expand(spec(pars, pulsars=[crab()], **{"ephemeris directory": elsewhere})))
+        assert found[("event", None, "J0534+2200")]["ephemeris"] == elsewhere + "/J0534+2200.par"
+
+    def test_the_directory_is_a_path(self, pars, atnf):
+        for bad in ("", 3, ["x"]):
+            with pytest.raises(StrategyError, match="'ephemeris directory' must be a path"):
+                RunStrategy().validate(spec(pars, pulsars=[crab()], **{"ephemeris directory": bad}))
+
+    def test_a_file_that_is_there_is_used_and_not_fetched(self, pars, atnf, tmp_path):
+        (tmp_path / "ephemerides").mkdir()
+        (tmp_path / "ephemerides" / "J0534+2200.par").write_text(
+            "PSRJ J0534+2200\nF0 29.9\n# mine\n"
+        )
+        expand(spec(pars, pulsars=[crab()]))
+        assert atnf == []
+        assert "# mine" in (tmp_path / "ephemerides" / "J0534+2200.par").read_text()
+
+    def test_it_can_be_mixed_with_files_and_in_a_batch(self, pars, atnf):
+        found = by_name(
+            expand(
+                spec(
+                    pars,
+                    pulsars=[
+                        pars["J0001+0001"],
+                        crab(batch="late"),
+                        {"ephemeris": pars["J0002+0002"]},
+                    ],
+                )
+            )
+        )
+        assert found[("analysis", "J0534+2200", "pe")]["needs"] == ["O4a-heterodyne/merge-late"]
+        assert found[("analysis", "J0001+0001", "pe")]["needs"] == ["O4a-heterodyne/merge"]
+
+    def test_it_needs_a_name(self, pars, atnf):
+        with pytest.raises(StrategyError, match="ATNF catalogue needs its 'name'"):
+            RunStrategy().validate(spec(pars, pulsars=[{"source": "atnf"}]))
+
+    def test_it_has_no_ephemeris_of_its_own(self, pars, atnf):
+        with pytest.raises(StrategyError, match="ATNF catalogue has no 'ephemeris'"):
+            RunStrategy().validate(spec(pars, pulsars=[crab(ephemeris=pars["J0001+0001"])]))
+
+    def test_there_are_two_sources(self, pars, atnf):
+        with pytest.raises(
+            StrategyError, match="source of a pulsar is 'file' or 'atnf', not 'web'"
+        ):
+            RunStrategy().validate(spec(pars, pulsars=[crab(source="web")]))
+        RunStrategy().validate(
+            spec(pars, pulsars=[{"ephemeris": pars["J0001+0001"], "source": "file"}])
+        )
+
+    def test_a_name_that_is_not_a_file_name_is_refused_before_anything_is_written(
+        self, pars, atnf, tmp_path
+    ):
+        with pytest.raises(StrategyError, match="pulsar name '../x' is not usable"):
+            RunStrategy().validate(spec(pars, pulsars=[crab(name="../x")]))
+        with pytest.raises(StrategyError, match="is not usable"):
+            expand(spec(pars, pulsars=[crab(name="../x")]))
+        assert atnf == [] and not (tmp_path / "ephemerides").exists()
+
+    def test_the_same_pulsar_by_name_and_in_a_file_is_listed_twice(self, pars, atnf):
+        with pytest.raises(StrategyError, match=r"J0534\+2200 is listed twice"):
+            RunStrategy().validate(
+                spec(
+                    pars, pulsars=[crab(), {"ephemeris": pars["J0001+0001"], "name": "J0534+2200"}]
+                )
+            )
+
+    def test_a_pulsar_that_is_not_in_the_catalogue_stops_everything(self, pars, atnf):
+        with pytest.raises(StrategyError, match="no pulsar J9999"):
+            expand(spec(pars, pulsars=[crab(), crab(name="J9999+9999")]))
+
+    def test_it_says_that_these_are_not_for_a_result(self, pars, atnf, caplog):
+        expand(spec(pars, pulsars=[crab()]))
+        assert "not timing solutions" in caplog.text and "not for a result" in caplog.text
+
+    def test_it_says_nothing_if_none_are_from_the_catalogue(self, pars, atnf, caplog):
+        expand(spec(pars))
+        assert "ATNF" not in caplog.text
+
+
+class TestEphemeridesApplied:
+    def test_a_run_of_pulsars_by_name_and_in_a_directory_is_applied(
+        self, project, atnf, tmp_path, pars
+    ):
+        directory = tmp_path / "timing"
+        directory.mkdir()
+        (directory / "J0003+0003.par").write_text("PSRJ J0003+0003\nF0 10\n")
+        text = blueprint(pars, "J0001+0001").replace(
+            f"    - {pars['J0001+0001']}\n",
+            f"    - {{name: J0534+2200, source: atnf}}\n    - {directory}\n",
+        )
+        project.apply(text)
+        assert set(project.open().subject_names()) == {"O4a-heterodyne", "J0534+2200", "J0003+0003"}
+        meta = analyses(project, "J0534+2200")["pe"].meta
+        assert meta["ephemeris"] == str(tmp_path / "ephemerides" / "J0534+2200.par")
+        assert os.path.exists(meta["ephemeris"])
+        shard = analyses(project, "O4a-heterodyne")["shard-0001"].meta["cwinpy-heterodyne"]
+        assert len(shard["ephemerides"]) == 2
+
+    def test_applying_it_again_does_not_fetch_again(self, project, atnf, pars):
+        text = blueprint(pars, "J0001+0001").replace(
+            f"    - {pars['J0001+0001']}\n", "    - {name: J0534+2200, source: atnf}\n"
+        )
+        project.apply(text)
+        project.ledger = project.open()
+        project.apply(text)
+        assert atnf == ["J0534+2200"]
+
+    def test_a_pulsar_that_is_not_in_the_catalogue_applies_nothing(self, project, atnf, pars):
+        text = blueprint(pars, "J0001+0001").replace(
+            f"    - {pars['J0001+0001']}\n", "    - {name: J9999+9999, source: atnf}\n"
+        )
+        with pytest.raises(StrategyError, match="no pulsar J9999"):
+            project.apply(text)
+        assert project.open().subject_names() == []
 
 
 # The blueprint, applied by asimov to a project

@@ -235,6 +235,31 @@ Found by running cwinpy, not from its documentation:
 - The three pipelines fit together: what `cwinpy-heterodyne` provides is what `cwinpy-merge`
   reads, and what that provides is what `cwinpy-pe` reads, checked on real data.
 
+## What ephemerides from a directory and from ATNF taught us
+
+- **The first real blueprint failed on a placeholder.** `examples/*.yaml` had `/path/to/...par`, and
+  the strategy has to read each `.par` file when it is applied (for the name of the pulsar), so it
+  failed there, correctly, but with nothing in the example to say that these were placeholders. The
+  examples say so now, and the small one has no placeholder left.
+- **Everything the rest of the plugin reads is a file.** The heterodyne and `cwinpy_pe` both take a path,
+  so the catalogue is not given to cwinpy to resolve by name (as its heterodyne could): it is fetched
+  once into the project, where it is a file like any other, and has a record (`<name>.atnf.json`) of
+  what it was. A file that is there is used and not fetched, which makes re-applying work without the
+  network, and lets a real timing solution be put there first.
+- **`expand` stays a function of the blueprint and the project.** Fetching is a side effect, but a
+  once-only one with a name that comes from the blueprint, and the same blueprint then gives the
+  same documents. Only `expand` fetches; `validate` works out where the file will be, so that a blueprint
+  can be checked offline.
+- **The catalogue's ephemeris is read by cwinpy.** `psrqpy`'s text (with the columns of uncertainties)
+  is accepted by `cwinpy.utils.is_par_file` and `PulsarParameters`, and the real
+  `cwinpy_heterodyne` ran on the Crab's, in `tests/test_ephemerides_cwinpy.py` (skipped if the catalogue
+  cannot be reached).
+- **They are not for a result.** The catalogue says where a pulsar is; it does not follow its phase through
+  a run as a timing solution does. This is said when they are used, in the README, and in the example.
+  Whether the O4 timing solutions are in a shared repository that could be fetched from is not known to
+  this plugin (a directory, or later a URL, would do it).
+- Mutation testing: 31 breaks of the new code, all caught (two did not apply at first, and were redone).
+
 ## What the summary pages taught us
 
 - **cwinpy makes pages for a set of pulsars, from the configuration of its own pipeline** (`pe_pipeline(config,
