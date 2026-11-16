@@ -606,7 +606,8 @@ def test_a_dry_run_does_not_need_the_files_to_be_there(transferred):
     build, config, ephemeris, data = transferred
     pipeline, scheduler = build()
     os.remove(data["L1"][2.0])
-    assert pipeline.submit_dag(dryrun=True) is None
+    with patch("asimov_cwinpy.pe.shutil.which", return_value="/env/bin/cwinpy_pe"):
+        assert pipeline.submit_dag(dryrun=True) is None
     scheduler.submit.assert_not_called()
 
 
