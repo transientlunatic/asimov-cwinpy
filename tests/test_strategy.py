@@ -843,6 +843,56 @@ def analyses(project, subject):
     return {a.name: a for a in project.open().get_event(subject)[0].productions}
 
 
+class TestSplitDetectors:
+    def documents(self, pars, **changes):
+        return by_name(expand(spec(pars, **changes)))
+
+    def shards(self, found):
+        return {k[2]: v for k, v in found.items() if k[2].startswith("shard-")}
+
+    def test_by_default_a_shard_has_all_the_detectors(self, pars):
+        shards = self.shards(self.documents(pars))
+        assert sorted(shards) == [f"shard-000{i}" for i in range(1, 6)]
+        assert all("interferometers" not in shard for shard in shards.values())
+
+    def test_split_there_is_a_shard_of_each_detector_for_each_span(self, pars):
+        shards = self.shards(self.documents(pars, **{"split detectors": True}))
+        assert len(shards) == 10
+        assert shards["shard-0003-H1"]["interferometers"] == ["H1"]
+        assert shards["shard-0003-L1"]["interferometers"] == ["L1"]
+
+    def test_the_detectors_of_a_span_have_the_same_span_and_settings(self, pars):
+        shards = self.shards(self.documents(pars, **{"split detectors": True}))
+        h1, l1 = shards["shard-0002-H1"], shards["shard-0002-L1"]
+        assert h1["cwinpy-heterodyne"] == l1["cwinpy-heterodyne"]
+        assert {k: v for k, v in h1.items() if k not in ("name", "interferometers")} == {
+            k: v for k, v in l1.items() if k not in ("name", "interferometers")
+        }
+
+    def test_the_merge_needs_every_one_of_them(self, pars):
+        found = self.documents(pars, **{"split detectors": True})
+        merge = found[("analysis", "O4a-heterodyne", "merge")]
+        assert len(merge["needs"]) == 10
+        assert set(merge["needs"]) == set(self.shards(found))
+
+    def test_the_event_keeps_all_the_detectors(self, pars):
+        found = self.documents(pars, **{"split detectors": True})
+        assert found[("event", None, "O4a-heterodyne")]["interferometers"] == ["H1", "L1"]
+        assert found[("event", None, "J0001+0001")]["interferometers"] == ["H1", "L1"]
+
+    def test_one_detector_is_not_split(self, pars):
+        shards = self.shards(
+            self.documents(pars, interferometers=["H1"], **{"split detectors": True})
+        )
+        assert sorted(shards) == [f"shard-000{i}" for i in range(1, 6)]
+        assert all("interferometers" not in shard for shard in shards.values())
+
+    def test_it_is_true_or_false(self, pars):
+        with pytest.raises(StrategyError, match="split detectors"):
+            RunStrategy().validate(spec(pars, **{"split detectors": "yes"}))
+        RunStrategy().validate(spec(pars, **{"split detectors": True}))
+
+
 class TestApplied:
     def test_everything_is_made(self, project, pars):
         project.apply(blueprint(pars, "J0001+0001", "J0002+0002"))
@@ -891,6 +941,20 @@ class TestApplied:
         assert pe["interferometers"] == ["H1", "L1"]
         assert pe["sampler"] == {"sampler": "dynesty"}
         assert pe["priors"]["h0"]["maximum"] == 1.0e-22
+
+    def test_a_shard_of_one_detector_analyses_only_that_one(self, project, pars):
+        project.apply(blueprint(pars, "J0001+0001", extra="  split detectors: true\n"))
+        found = analyses(project, "O4a-heterodyne")
+        assert set(found) == {f"shard-000{i}-{d}" for i in range(1, 5) for d in ("H1", "L1")} | {
+            "merge"
+        }
+        assert found["shard-0002-L1"].meta["interferometers"] == ["L1"]
+        assert found["shard-0002-H1"].meta["interferometers"] == ["H1"]
+        # the pipeline reads the detectors, and the segment and frame settings, from there
+        assert found["shard-0002-L1"].pipeline.detectors() == ["L1"]
+        assert analyses(project, "J0001+0001")["pe"].meta["interferometers"] == ["H1", "L1"]
+        merge = found["merge"]
+        assert len(merge.dependency_objects) == 8
 
     def test_the_needs_are_found(self, project, pars):
         project.apply(blueprint(pars, "J0001+0001"))

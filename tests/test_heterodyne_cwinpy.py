@@ -106,6 +106,29 @@ def test_cwinpys_runner_makes_the_dag_and_an_empty_file_for_each_output(
     assert not pipeline.detect_completion()
 
 
+def test_a_shard_of_one_detector_has_only_that_detectors_jobs_and_runs(
+    project, monkeypatch, frames, tmp_path
+):
+    pipeline = shard(
+        project,
+        monkeypatch,
+        blueprint(
+            frames,
+            frames["caches"],
+            extra_event="frequency factors: [1, 2]\n",
+            extra_analysis="interferometers: [L1]\n",
+        ),
+    )
+    nodes = minidag.read_dag(pipeline.dag_file())
+    assert len(nodes) == 2  # one detector, two factors
+    assert all("_L1" in name for name in nodes)
+    assert len(pipeline.expected_files()) == 2
+    assert all("L1" in os.path.basename(f) for f in pipeline.expected_files())
+    codes = minidag.run_dag(pipeline.dag_file(), str(tmp_path / "scratch"))
+    assert set(codes.values()) == {0}, codes
+    assert pipeline.incomplete_outputs() == []
+
+
 def test_the_jobs_make_data_and_the_shard_is_complete_when_dagman_has_succeeded(
     project, monkeypatch, frames, tmp_path
 ):

@@ -13,6 +13,9 @@ strategy:
   run: O4a-heterodyne        # the name of the run subject (default: <name>-heterodyne)
   interferometers: [H1, L1]
   frequency factors: [1, 2]
+  # One shard for each detector for each span, so that missing data for one detector does not
+  # fail the other (80 analyses here instead of 40; see the README).
+  split detectors: true
   data start: 1368975618
   data end: 1380000000
   # Whole jobs of `joblength` (a day, unless given) to a shard: about 40 shards here. Or

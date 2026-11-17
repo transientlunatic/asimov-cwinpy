@@ -61,6 +61,7 @@ OPTIONS = {
     "pulsars",
     "ephemeris directory",
     "shared filesystem",
+    "split detectors",
     "heterodyne",
     "merge",
     "pe",
@@ -152,8 +153,9 @@ class RunStrategy(Strategy):
         directory = spec.get("ephemeris directory", DIRECTORY)
         if not isinstance(directory, str) or not directory:
             raise StrategyError("'ephemeris directory' must be a path.")
-        if not isinstance(spec.get("shared filesystem", True), bool):
-            raise StrategyError("'shared filesystem' must be true or false.")
+        for key in ("shared filesystem", "split detectors"):
+            if not isinstance(spec.get(key, key == "shared filesystem"), bool):
+                raise StrategyError(f"'{key}' must be true or false.")
         self.pulsars(spec)
 
     @staticmethod
@@ -329,6 +331,21 @@ class RunStrategy(Strategy):
                 found[key] = {**deepcopy(defaults), **found.get(key, {})}
         return found
 
+    @staticmethod
+    def _shards(ranges, detectors, spec):
+        """
+        The shards: ``(number, (first, last), detectors)``.
+
+        With ``split detectors`` there is one shard of each detector for each span, so that data
+        that cannot be got for one detector fails only that shard, not the others of the span.
+        """
+        for number, span in enumerate(ranges, start=1):
+            if spec.get("split detectors") and len(detectors) > 1:
+                for detector in detectors:
+                    yield number, span, [detector]
+            else:
+                yield number, span, list(detectors)
+
     def expand(self, blueprint, context):
         spec = blueprint["strategy"]
         run = spec.get("run") or f"{blueprint['name']}-heterodyne"
@@ -364,12 +381,14 @@ class RunStrategy(Strategy):
         for batch, members in sorted(batches.items(), key=lambda item: (item[0] != MAIN, item[0])):
             prefix = "" if batch == MAIN else f"{batch}-"
             names = []
-            for number, (first, last) in enumerate(ranges, start=1):
+            for number, (first, last), shard_detectors in self._shards(ranges, detectors, spec):
+                suffix = f"-{shard_detectors[0]}" if len(shard_detectors) < len(detectors) else ""
                 shard = {
                     "kind": "analysis",
-                    "name": f"{prefix}shard-{number:04d}",
+                    "name": f"{prefix}shard-{number:04d}{suffix}",
                     "pipeline": "cwinpy-heterodyne",
                     "event": run,
+                    **({"interferometers": shard_detectors} if suffix else {}),
                     **self._tail(heterodyne, "data"),
                     **self._job(heterodyne),
                     "cwinpy-heterodyne": {

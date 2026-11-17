@@ -66,6 +66,7 @@ strategy:
 | `interferometers`, `data start`, `data end`, `shards`, `pulsars` | Required. `frequency factors` defaults to `[1, 2]`; `run` names the run subject (default `<name>-heterodyne`); `joblength` is the length of data one job reads (default a day). |
 | `ephemeris directory` | Where ephemerides that are fetched are put (`ephemerides`, in the project, unless it says). |
 | `shared filesystem` | `false` if the execute nodes cannot see the project: see [Clusters whose nodes do not see the project](#clusters-whose-nodes-do-not-see-the-project). Default `true`. |
+| `split detectors` | `true` for one shard of each detector for each span of time, instead of one shard of all the detectors. Default `false`. See [Splitting shards by detector](#splitting-shards-by-detector). |
 | `heterodyne` | `data`, `scheduler` and `retry` go on every shard as they are; `settings` goes under `cwinpy-heterodyne:` (`strict data requirement`, `segment lists`, ...). |
 | `merge` | `scheduler`, `retry`. |
 | `pe` | `sampler`, `scheduler`, `retry` go on each parameter estimation; `priors` on each pulsar; `settings` under `cwinpy-pe:`. |
@@ -101,6 +102,22 @@ the pulsars that are done is not made again, and their analyses are not changed.
 parameter estimation needs the merge of its batch. The strategy counts about
 `shards x batches + pulsars + batches` analyses; asimov refuses a group of more than
 `[strategy] max_group_analyses` (500 unless set).
+
+### Splitting shards by detector
+
+cwinpy makes the DAG of a shard only if every detector has some science data in the whole span of
+it, and a job that cannot read its data fails the shard. With the detectors in one shard, data that
+is missing for one detector (a stretch with no segments, a frame that cannot be got) fails the
+analysis of the others too. With `split detectors: true` there is a shard for each detector for each
+span (`shard-0007-H1`, `shard-0007-L1`), each with `interferometers` of its own in the ledger, and the
+same span and settings otherwise. A failure then costs one detector for one span, and
+the retries of asimov are for that detector alone. The merge needs all of them, and joins the files of
+each detector as it did, so what the parameter estimation reads does not change. A shard that was
+given up on is left out of the merge, as before, so the other detector of its span is still used.
+
+The price is twice as many shards for two detectors (40 time shards are 80 analyses, and the limit of
+asimov for a group is 500), and twice the DAGs. With one detector nothing is split. It is off by default so that the
+names of the analyses of a project that exists do not change; for a run of any length it is the better choice.
 
 ### Clusters whose nodes do not see the project
 

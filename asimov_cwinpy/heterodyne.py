@@ -395,12 +395,57 @@ class HeterodynePipeline(CwinpyPipeline):
         before = os.environ.get("PATH", "")
         environment = software_environment(self.production)
         binaries = os.path.join(environment, "bin") if environment else None
-        if binaries and os.path.isdir(binaries):
+        if binaries:
+            if not os.path.isdir(binaries):
+                raise PipelineException(
+                    f"The software environment {environment} has no bin directory here. It is "
+                    "where the jobs of the heterodyne get cwinpy from, so it has to be one that "
+                    "this machine sees as well as the execute nodes.",
+                    production=self.production.name,
+                )
             os.environ["PATH"] = binaries + os.pathsep + before
         try:
             yield
         finally:
             os.environ["PATH"] = before
+
+    def check_executables(self, runner):
+        """
+        Check that the jobs that cwinpy has written run the software of the environment.
+
+        cwinpy takes the first ``cwinpy_heterodyne`` on the path, so one in another environment
+        (such as one in a home directory that the execute nodes do not see) can end up in the
+        jobs, and the failure is then on the nodes, as an invalid interpreter.
+
+        Raises
+        ------
+        PipelineException
+            If a job runs an executable from outside the software environment that is set.
+        """
+        environment = software_environment(self.production)
+        if not environment:
+            return
+        binaries = (
+            os.path.join(environment, "bin") + os.sep,
+            os.path.join(os.path.realpath(environment), "bin") + os.sep,
+        )
+        directory = os.path.dirname(str(runner.dag_file))
+        wrong = set()
+        for name in sorted(os.listdir(directory)):
+            if not name.endswith(".sub"):
+                continue
+            with open(os.path.join(directory, name)) as handle:
+                for line in handle:
+                    key, _, value = line.partition("=")
+                    path = value.strip()
+                    if key.strip() == "executable" and not path.startswith(binaries):
+                        wrong.add(path)
+        if wrong:
+            raise PipelineException(
+                f"The jobs of the heterodyne run {', '.join(sorted(wrong))}, which is not in the "
+                f"software environment {environment}. Install cwinpy there.",
+                production=self.production.name,
+            )
 
     def _config_file(self):
         """The configuration that asimov has made, from the event repository."""
@@ -490,6 +535,7 @@ class HeterodynePipeline(CwinpyPipeline):
                 self.why_no_dag(error), production=self.production.name
             ) from error
 
+        self.check_executables(runner)
         records = [
             {"detector": det, "factor": factor, "pulsar": pulsar, "files": list(files)}
             for det, by_factor in runner.heterodyned_files.items()
