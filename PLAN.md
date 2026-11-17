@@ -420,6 +420,17 @@ Unverified, needs the pool (user and Matt):
 - Not done: dropping a detector from a shard that has no data at all is now moot for split runs,
   where such a shard just fails alone; for unsplit runs it is still the message of `why_no_dag`.
 
+## What the first trial on the pool taught us (heterodyne executable)
+
+- `[pipelines] environment` is, in a normal asimov config, the environment that asimov runs in, so it
+  was a path in a home directory. The executable check passed (the jobs used that environment, as set) and
+  the nodes still could not run it. Now, where the project is said not to be seen by the nodes
+  (`scheduler: transfer files`, set on the shards and the PE by `shared filesystem: false`), an executable in the home
+  directory of the user is an error that says to set `scheduler: environment`.
+- A heuristic (home directory), not knowledge of the pool: the pool could also hide other places.
+- The restart test with the real `cwinpy_pe` was racy (a quick run finished before its 4 s alarm and
+  was killed by the alarm in the post-processing, exit -14, not 77). It uses 500 live points now.
+
 ## Open questions
 
 - Does a heterodyne config for a sub-range of time reproduce the corresponding

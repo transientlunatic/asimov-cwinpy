@@ -79,6 +79,42 @@ def executable_in(production, name):
     return os.path.join(environment, "bin", name) if environment else None
 
 
+def transfers(production):
+    """
+    Whether the execute nodes are said not to see the project (``scheduler: transfer files``).
+
+    The jobs then run in a directory of their own, with their inputs copied there.
+    """
+    return bool((production.meta.get("scheduler") or {}).get("transfer files"))
+
+
+def in_home(path):
+    """Whether ``path`` is in the home directory of the user that asimov runs as."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    for candidate in (os.path.abspath(path), os.path.realpath(path)):
+        if candidate == home or candidate.startswith(home + os.sep):
+            return True
+    return False
+
+
+def not_for_the_nodes(production, path):
+    """
+    A message if ``path`` cannot be what runs on the execute nodes, else None.
+
+    Where the nodes do not see the project, they do not see the home directory either, which is
+    where the environment that asimov runs in usually is (``[pipelines] environment``, the first
+    place that the software environment is looked for).
+    """
+    if not transfers(production) or not in_home(path):
+        return None
+    return (
+        f"{path} is in the home directory, which the execute nodes do not see. Set "
+        "`scheduler: environment` on this analysis to an environment that they do, such as an "
+        "IGWN one on CVMFS (the `[pipelines] environment` of the project is usually the one that "
+        "asimov itself runs in)."
+    )
+
+
 def format_environment(variables):
     """
     The value of HTCondor's ``environment`` for a mapping of variables.

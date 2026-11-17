@@ -361,6 +361,23 @@ def test_jobs_that_run_another_environment_than_the_one_set_are_an_error(
         pipeline.check_executables(runner)
 
 
+def test_where_the_nodes_do_not_see_home_a_job_that_runs_from_home_is_an_error(
+    project, tmp_path, fake_cwinpy, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    submit = tmp_path / "submit"
+    submit.mkdir()
+    mine = tmp_path / "home" / ".conda" / "envs" / "asimov"
+    (submit / "a.sub").write_text(f"executable = {mine}/bin/cwinpy_heterodyne\n")
+    runner = types.SimpleNamespace(dag_file=str(submit / "x.dag"))
+    with patch("asimov_cwinpy.heterodyne.config.get", return_value=str(mine)):
+        pipeline = configured(project, tmp_path)
+        pipeline.check_executables(runner)  # nothing said of the nodes: allowed
+        pipeline.production.meta["scheduler"] = {"transfer files": True}
+        with pytest.raises(PipelineException, match="home directory.*scheduler: environment"):
+            pipeline.check_executables(runner)
+
+
 def test_the_executables_are_not_checked_without_an_environment(project, tmp_path, fake_cwinpy):
     pipeline = configured(project, tmp_path)
     submit = tmp_path / "submit"

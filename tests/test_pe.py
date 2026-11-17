@@ -678,3 +678,19 @@ def test_with_nothing_chosen_the_one_on_the_path_is_used(project):
         with patch("asimov_cwinpy.pe.shutil.which", return_value="/usr/bin/cwinpy_pe") as which:
             assert pipeline._executable() == "/usr/bin/cwinpy_pe"
     which.assert_called_once_with("cwinpy_pe")
+
+
+def test_where_the_nodes_do_not_see_home_an_executable_in_home_is_an_error(
+    project, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    mine = tmp_path / ".conda" / "envs" / "asimov" / "bin"
+    mine.mkdir(parents=True)
+    (mine / "cwinpy_pe").write_text("#!/bin/sh\n")
+    (mine / "cwinpy_pe").chmod(0o755)
+    with patch("asimov_cwinpy.jobs.config.get", return_value=str(mine.parent)):
+        pipeline = make(project)
+        assert pipeline._executable() == str(mine / "cwinpy_pe")
+        pipeline.production.meta["scheduler"] = {"transfer files": True}
+        with pytest.raises(PipelineException, match="home directory"):
+            pipeline._executable()

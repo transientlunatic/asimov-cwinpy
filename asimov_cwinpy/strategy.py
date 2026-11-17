@@ -390,7 +390,7 @@ class RunStrategy(Strategy):
                     "event": run,
                     **({"interferometers": shard_detectors} if suffix else {}),
                     **self._tail(heterodyne, "data"),
-                    **self._job(heterodyne),
+                    **self._job(heterodyne, scheduler=transferred),
                     "cwinpy-heterodyne": {
                         **deepcopy(heterodyne.get("settings") or {}),
                         "data start": first,

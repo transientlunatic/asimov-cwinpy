@@ -129,7 +129,11 @@ software that the nodes can run, and the jobs that asimov describes made indepen
 default is `[pipelines] environment` in the configuration of the project; `scheduler: environment` on
 an analysis replaces it for that analysis. Use one that the nodes see, such as an IGWN environment on
 CVMFS that has cwinpy. It is where cwinpy finds the executables that it writes into the DAG of the
-heterodyne, and where `cwinpy_pe` is run from. Two things follow. The DAG is built by the cwinpy that
+heterodyne, and where `cwinpy_pe` is run from. With `shared filesystem: false`, a heterodyne or PE job that would run an executable in the home
+directory of the user that asimov runs as is refused, with a message, because the execute nodes do not see it. The
+`[pipelines] environment` of a project is usually the environment that asimov itself runs in (in a home
+directory), so on such a cluster set `scheduler: environment` on the `heterodyne` and `pe` blocks, as in `examples/test-run.yaml`.
+Two things follow. The DAG is built by the cwinpy that
 asimov runs in and is run by the cwinpy of the environment, so they should be the same version.
 And the DAG files record the path: changing the environment needs the DAG to be made again (a new
 project, or remove the `submit/` directory and `manifest.json` of the shard).
