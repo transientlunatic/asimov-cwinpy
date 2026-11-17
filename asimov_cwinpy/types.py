@@ -10,6 +10,8 @@ therefore not owned by any one pipeline.
 
 from asimov.analysis import SimpleAnalysis
 
+from .jobs import HTCONDOR_TERMS
+
 
 class CwinpyAnalysis(SimpleAnalysis):
     """An analysis by one of the cwinpy pipelines."""
@@ -34,6 +36,14 @@ class CwinpyAnalysis(SimpleAnalysis):
                     "its data is heterodyned and analysed, e.g. [1, 2] for the "
                     "signal at once and twice the rotation frequency."
                 ),
+            },
+            "htcondor": {
+                "type": "section",
+                "description": (
+                    "Settings of the HTCondor jobs that the cwinpy pipelines describe, which "
+                    "asimov's `scheduler:` has no term for."
+                ),
+                "children": HTCONDOR_TERMS,
             },
         }
     }

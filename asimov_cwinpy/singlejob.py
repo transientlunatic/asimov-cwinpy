@@ -18,6 +18,7 @@ from asimov.scheduler_utils import create_job_from_dict
 from asimov.utils import set_directory
 
 from .common import CwinpyPipeline
+from .jobs import executable_in, htcondor_options, runs_locally
 
 
 class SingleJobPipeline(CwinpyPipeline):
@@ -55,16 +56,19 @@ class SingleJobPipeline(CwinpyPipeline):
 
     def _python(self):
         """
-        The Python that runs the job: the analysis's own ``executable``, else the one in the
-        environment of the project's pipelines, else the one asimov is running in. It has to
-        have this package, as well as cwinpy.
+        The Python that runs the job: the analysis's own ``executable``; else, for a job that runs
+        on the machine that asimov runs on (``htcondor: universe: local``), the Python that asimov
+        is running in, which has this package; else the one in the software environment of the
+        analysis (``scheduler: environment``, or ``[pipelines] environment``); else the one asimov
+        is running in. It has to have this package, as well as cwinpy.
         """
-        try:
-            default = os.path.join(config.get("pipelines", "environment"), "bin", "python")
-        except Exception:
-            default = sys.executable
-        executable = self.production.meta.get("executable", default)
-        return executable if os.path.exists(executable) else sys.executable
+        executable = self.production.meta.get("executable")
+        if executable and os.path.exists(executable):
+            return executable
+        if runs_locally(self.production):
+            return sys.executable
+        executable = executable_in(self.production, "python")
+        return executable if executable and os.path.exists(executable) else sys.executable
 
     def submit_dag(self, dryrun=False):
         """
@@ -89,8 +93,8 @@ class SingleJobPipeline(CwinpyPipeline):
             "request_cpus": str(asked.get("request cpus", 1)),
             "request_memory": str(asked.get("request memory", "4096MB")),
             "request_disk": str(asked.get("request disk", "4096MB")),
-            "getenv": "true",
             "batch_name": f"{self.pipeline_name}/{self.production.event.name}/{name}",
+            **htcondor_options(self.production),
         }
         accounting = asked.get("accounting group")
         if accounting:

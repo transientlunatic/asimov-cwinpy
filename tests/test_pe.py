@@ -36,6 +36,14 @@ def lines(pipeline):
     return pipeline.render_config().splitlines()
 
 
+def sampler_kwargs(pipeline):
+    """The ``sampler-kwargs`` of the configuration, as the dictionary that cwinpy reads."""
+    import ast
+
+    (found,) = [line for line in lines(pipeline) if line.startswith("sampler-kwargs = ")]
+    return ast.literal_eval(found.split(" = ", 1)[1])
+
+
 # What it reads
 
 
@@ -113,18 +121,35 @@ def test_the_configuration_for_simulated_noise(project):
 
 
 def test_the_sampler_is_passed_on(project):
-    config = lines(
-        make(
-            project,
-            extra_analysis="sampler:\n  sampler: dynesty\n  sampler kwargs: {nlive: 100}\n",
-        )
+    pipeline = make(
+        project,
+        extra_analysis="sampler:\n  sampler: dynesty\n  sampler kwargs: {nlive: 100}\n",
     )
+    config = lines(pipeline)
+    assert sampler_kwargs(pipeline) == {"nlive": 100, "exit_code": 77}
     assert "sampler = dynesty" in config
-    assert "sampler-kwargs = {'nlive': 100}" in config
 
 
 def test_no_sampler_is_named_unless_the_analysis_names_one(project):
-    assert not any(line.startswith("sampler") for line in lines(make(project)))
+    assert not any(line.startswith("sampler = ") for line in lines(make(project)))
+
+
+def test_the_sampler_stops_with_the_code_that_asimov_takes_for_a_restart(project):
+    """bilby's own code for a checkpoint is 130, which asimov would take for a failure."""
+    assert sampler_kwargs(make(project)) == {"exit_code": 77}
+
+
+def test_an_exit_code_that_the_analysis_gives_is_kept(project):
+    pipeline = make(
+        project, extra_analysis="sampler:\n  sampler kwargs: {nlive: 50, exit_code: 5}\n"
+    )
+    assert sampler_kwargs(pipeline) == {"nlive": 50, "exit_code": 5}
+
+
+def test_the_kwargs_of_the_analysis_are_not_changed_by_adding_the_code(project):
+    pipeline = make(project, extra_analysis="sampler:\n  sampler kwargs: {nlive: 100}\n")
+    lines(pipeline)
+    assert pipeline.production.meta["sampler"]["sampler kwargs"] == {"nlive": 100}
 
 
 def test_the_restart_time_is_the_standard_scheduler_term(project):
@@ -407,3 +432,249 @@ def test_a_job_that_is_running_is_left_alone_though_it_has_a_log(project):
     write_log(pipeline, ("submitted",))
     write_error(pipeline, "INFO sampling\n")
     assert not resurrect(pipeline)
+
+
+# Without a shared filesystem: the files of the job are transferred
+
+
+@pytest.fixture
+def transferred(project, tmp_path):
+    """A pipeline whose files are transferred, with files that exist, and a scheduler to watch."""
+    data = {}
+    for detector in ("H1", "L1"):
+        path = tmp_path / "merged" / f"merged_J0534+2200_{detector}_2f.hdf5"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(detector)
+        data[detector] = {2.0: str(path)}
+    ephemeris = tmp_path / "J0534+2200.par"
+    ephemeris.write_text("PSRJ J0534+2200\n")
+    config = tmp_path / "repo" / "pe.ini"
+    config.parent.mkdir()
+    config.write_text("par-file = x\n")
+
+    def build(extra_analysis="scheduler:\n  transfer files: true\n", **kwargs):
+        pipeline = make(
+            project,
+            extra_analysis=extra_analysis,
+            provided={DATA_ASSET: {"J0534+2200": data}},
+            **kwargs,
+        )
+        pipeline.production.meta["ephemeris"] = str(ephemeris)
+        pipeline.production.event.repository = MagicMock(directory=str(tmp_path / "repo"))
+        pipeline.production.event.repository.find_prods.return_value = ["pe.ini"]
+        pipeline.category = ""
+        scheduler = MagicMock()
+        scheduler.submit.return_value = 42
+        with (
+            patch.object(
+                PEPipeline, "scheduler", new_callable=PropertyMock, return_value=scheduler
+            ),
+            patch("asimov_cwinpy.pe.shutil.which", return_value="/env/bin/cwinpy_pe"),
+        ):
+            yield_ = (pipeline, scheduler)
+        return yield_
+
+    return build, config, ephemeris, data
+
+
+def submit(pipeline, scheduler, **kwargs):
+    with (
+        patch.object(PEPipeline, "scheduler", new_callable=PropertyMock, return_value=scheduler),
+        patch("asimov_cwinpy.pe.shutil.which", return_value="/env/bin/cwinpy_pe"),
+    ):
+        pipeline.submit_dag(**kwargs)
+    return scheduler.submit.call_args[0][0].kwargs if scheduler.submit.called else None
+
+
+def test_the_files_are_only_transferred_if_the_ledger_says_so(project):
+    pipeline = make(project)
+    assert pipeline.transfers() is False
+    pipeline.production.meta["scheduler"] = {"transfer files": True}
+    assert pipeline.transfers() is True
+    pipeline.production.meta["scheduler"] = {"transfer files": False}
+    assert pipeline.transfers() is False
+
+
+def test_every_path_in_the_configuration_is_then_the_name_of_a_file_in_the_directory_of_the_job(
+    transferred,
+):
+    build, *_ = transferred
+    pipeline, _ = build(extra_event="frequency factors: [2]\n")
+    config = dict(line.split(" = ", 1) for line in lines(pipeline))
+    assert config["par-file"] == "J0534+2200.par"
+    assert (
+        config["data-file-2f"]
+        == "[H1:merged_J0534+2200_H1_2f.hdf5, L1:merged_J0534+2200_L1_2f.hdf5]"
+    )
+    assert config["prior"] == "pe.prior"
+    assert config["outdir"] == "results"
+    assert not any(os.sep in value for value in config.values())
+
+
+def test_the_paths_are_absolute_when_nothing_is_transferred(project):
+    config = dict(line.split(" = ", 1) for line in lines(make(project)))
+    assert config["par-file"] == "/data/J0534+2200.par"
+    assert config["data-file-2f"].startswith("[H1:/m/H1_2f.hdf5")
+    assert os.path.isabs(config["outdir"]) and os.path.isabs(config["prior"])
+
+
+def test_the_job_asks_htcondor_to_transfer_the_files_and_bring_the_results_back(transferred):
+    build, config, ephemeris, data = transferred
+    pipeline, scheduler = build()
+    job = submit(pipeline, scheduler)
+    rundir = pipeline.production.rundir
+    assert job["should_transfer_files"] == "YES"
+    assert job["when_to_transfer_output"] == "ON_EXIT_OR_EVICT"
+    assert job["transfer_output_files"] == "results"
+    assert job["initialdir"] == rundir  # so that results come back to <rundir>/results
+    assert job["arguments"] == "--config pe.ini"
+    sent = job["transfer_input_files"].split(", ")
+    assert sent == [
+        str(config),
+        pipeline.prior_file(),
+        str(ephemeris),
+        data["H1"][2.0],
+        data["L1"][2.0],
+        os.path.join(rundir, "results"),
+    ]
+
+
+def test_the_directory_of_the_results_is_there_from_the_start_so_that_it_is_never_missing(
+    transferred,
+):
+    build, *_ = transferred
+    pipeline, scheduler = build()
+    submit(pipeline, scheduler)
+    assert os.path.isdir(os.path.join(pipeline.production.rundir, "results"))
+
+
+def test_the_directory_of_the_results_is_not_made_when_nothing_is_transferred(project):
+    pipeline = make(project)
+    pipeline.production.event.repository = MagicMock(directory="/repo")
+    pipeline.production.event.repository.find_prods.return_value = ["pe.ini"]
+    pipeline.build_dag()
+    assert not os.path.exists(os.path.join(pipeline.production.rundir, "results"))
+
+
+def test_a_job_that_stopped_itself_gets_its_checkpoint_back(transferred):
+    """It is the directory of the results that is sent, which holds the checkpoint."""
+    build, *_ = transferred
+    pipeline, scheduler = build(
+        extra_analysis="scheduler:\n  transfer files: true\n  periodic restart time: 600\n"
+    )
+    submit(pipeline, scheduler)
+    results = os.path.join(pipeline.production.rundir, "results")
+    open(os.path.join(results, "pe_resume.pickle"), "w").write("checkpoint")
+    job = submit(pipeline, scheduler)
+    assert results in job["transfer_input_files"].split(", ")
+    assert "periodic-restart-time = 600" in lines(pipeline)
+
+
+def test_simulated_data_has_no_data_files_to_send(transferred):
+    build, config, ephemeris, _ = transferred
+    pipeline, scheduler = build(
+        extra_analysis=SIMULATED + "scheduler:\n  transfer files: true\n", simulated=False
+    )
+    job = submit(pipeline, scheduler)
+    sent = job["transfer_input_files"].split(", ")
+    assert len(sent) == 4 and not any(path.endswith(".hdf5") for path in sent)
+
+
+def test_two_files_with_one_name_are_refused_because_they_are_put_in_one_directory(transferred):
+    build, config, ephemeris, data = transferred
+    pipeline, scheduler = build()
+    pipeline.production.meta["ephemeris"] = data["H1"][2.0].replace("H1", "L1")
+    with pytest.raises(
+        PipelineException, match="merged_J0534\\+2200_L1_2f.hdf5 is the name of more"
+    ):
+        submit(pipeline, scheduler)
+    scheduler.submit.assert_not_called()
+
+
+def test_a_file_that_is_not_there_is_an_error_here_and_not_a_job_on_hold(transferred):
+    build, config, ephemeris, data = transferred
+    pipeline, scheduler = build()
+    os.remove(data["L1"][2.0])
+    with pytest.raises(
+        PipelineException, match="would hold the job.*merged_J0534\\+2200_L1_2f.hdf5"
+    ):
+        submit(pipeline, scheduler)
+    scheduler.submit.assert_not_called()
+
+
+def test_a_dry_run_does_not_need_the_files_to_be_there(transferred):
+    build, config, ephemeris, data = transferred
+    pipeline, scheduler = build()
+    os.remove(data["L1"][2.0])
+    with patch("asimov_cwinpy.pe.shutil.which", return_value="/env/bin/cwinpy_pe"):
+        assert pipeline.submit_dag(dryrun=True) is None
+    scheduler.submit.assert_not_called()
+
+
+def test_nothing_is_transferred_unless_asked_and_getenv_is_not_asked_for(submitting):
+    pipeline, scheduler = submitting
+    pipeline.submit_dag()
+    job = scheduler.submit.call_args[0][0].kwargs
+    assert "should_transfer_files" not in job and "transfer_input_files" not in job
+    assert "getenv" not in job and "universe" not in job and "environment" not in job
+    assert job["arguments"].startswith("--config /repo")
+
+
+# What the ledger says of the software environment and of the jobs
+
+
+def test_the_executable_is_in_the_software_environment_of_the_analysis(project, tmp_path):
+    bin_directory = tmp_path / "igwn" / "bin"
+    bin_directory.mkdir(parents=True)
+    (bin_directory / "cwinpy_pe").write_text("#!/bin/sh\n")
+    (bin_directory / "cwinpy_pe").chmod(0o755)
+    pipeline = make(project, extra_analysis=f"scheduler:\n  environment: {tmp_path / 'igwn'}\n")
+    assert pipeline._executable() == str(bin_directory / "cwinpy_pe")
+
+
+def test_the_environment_of_the_analysis_is_used_rather_than_that_of_the_project(project, tmp_path):
+    mine = tmp_path / "mine" / "bin"
+    other = tmp_path / "other" / "bin"
+    for directory in (mine, other):
+        directory.mkdir(parents=True)
+        (directory / "cwinpy_pe").write_text("#!/bin/sh\n")
+        (directory / "cwinpy_pe").chmod(0o755)
+    pipeline = make(project)
+    with patch("asimov_cwinpy.jobs.config.get", return_value=str(tmp_path / "other")):
+        assert pipeline._executable() == str(other / "cwinpy_pe")  # the project's
+        pipeline.production.meta["scheduler"] = {"environment": str(tmp_path / "mine")}
+        assert pipeline._executable() == str(mine / "cwinpy_pe")  # the analysis's
+
+
+def test_what_the_ledger_says_of_the_job_goes_into_its_description(project):
+    extra = (
+        "scheduler:\n  environment variables:\n    LAL_DATA_PATH: /cvmfs/x\n    NOTE: two words\n"
+        "htcondor:\n  universe: vanilla\n  requirements: (HAS_CVMFS =?= True)\n  getenv: true\n"
+    )
+    pipeline = make(project, extra_analysis=extra)
+    pipeline.production.event.repository = MagicMock(directory="/repo")
+    pipeline.production.event.repository.find_prods.return_value = ["pe.ini"]
+    scheduler = MagicMock()
+    scheduler.submit.return_value = 1
+    job = submit(pipeline, scheduler)
+    assert job["universe"] == "vanilla"
+    assert job["requirements"] == "(HAS_CVMFS =?= True)"
+    assert job["getenv"] == "true"
+    assert job["environment"] == "\"LAL_DATA_PATH=/cvmfs/x NOTE='two words'\""
+
+
+def test_an_environment_that_has_no_executable_is_an_error_and_not_another_from_the_path(
+    project, tmp_path
+):
+    (tmp_path / "empty" / "bin").mkdir(parents=True)
+    pipeline = make(project, extra_analysis=f"scheduler:\n  environment: {tmp_path / 'empty'}\n")
+    with pytest.raises(PipelineException, match="Cannot find the cwinpy_pe executable .*empty"):
+        pipeline._executable()
+
+
+def test_with_nothing_chosen_the_one_on_the_path_is_used(project):
+    pipeline = make(project)
+    with patch("asimov_cwinpy.jobs.config.get", side_effect=KeyError("environment")):
+        with patch("asimov_cwinpy.pe.shutil.which", return_value="/usr/bin/cwinpy_pe") as which:
+            assert pipeline._executable() == "/usr/bin/cwinpy_pe"
+    which.assert_called_once_with("cwinpy_pe")

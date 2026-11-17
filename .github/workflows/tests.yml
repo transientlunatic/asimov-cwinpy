@@ -121,4 +121,5 @@ jobs:
 
     - name: Run the real cwinpy through asimov
       run: |
-        pytest tests/test_pe_cwinpy.py tests/test_heterodyne_cwinpy.py tests/test_chain_cwinpy.py --no-cov -v
+        pytest tests/test_pe_cwinpy.py tests/test_heterodyne_cwinpy.py tests/test_chain_cwinpy.py \
+          tests/test_transfer_cwinpy.py tests/test_ephemerides_cwinpy.py --no-cov -v

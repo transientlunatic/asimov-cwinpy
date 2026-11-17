@@ -65,6 +65,7 @@ strategy:
 |---|---|
 | `interferometers`, `data start`, `data end`, `shards`, `pulsars` | Required. `frequency factors` defaults to `[1, 2]`; `run` names the run subject (default `<name>-heterodyne`); `joblength` is the length of data one job reads (default a day). |
 | `ephemeris directory` | Where ephemerides that are fetched are put (`ephemerides`, in the project, unless it says). |
+| `shared filesystem` | `false` if the execute nodes cannot see the project: see [Clusters whose nodes do not see the project](#clusters-whose-nodes-do-not-see-the-project). Default `true`. |
 | `heterodyne` | `data`, `scheduler` and `retry` go on every shard as they are; `settings` goes under `cwinpy-heterodyne:` (`strict data requirement`, `segment lists`, ...). |
 | `merge` | `scheduler`, `retry`. |
 | `pe` | `sampler`, `scheduler`, `retry` go on each parameter estimation; `priors` on each pulsar; `settings` under `cwinpy-pe:`. |
@@ -100,6 +101,59 @@ the pulsars that are done is not made again, and their analyses are not changed.
 parameter estimation needs the merge of its batch. The strategy counts about
 `shards x batches + pulsars + batches` analyses; asimov refuses a group of more than
 `[strategy] max_group_analyses` (500 unless set).
+
+### Clusters whose nodes do not see the project
+
+On some clusters the execute nodes do not see the project, nor the home directory that it (and the
+environment of a user) may be in, and the pool does not allow `getenv`. Two things are then needed:
+software that the nodes can run, and the jobs that asimov describes made independent of the project.
+
+**The software.** Every job runs from a software environment: a directory with `bin/` in it. The
+default is `[pipelines] environment` in the configuration of the project; `scheduler: environment` on
+an analysis replaces it for that analysis. Use one that the nodes see, such as an IGWN environment on
+CVMFS that has cwinpy. It is where cwinpy finds the executables that it writes into the DAG of the
+heterodyne, and where `cwinpy_pe` is run from. Two things follow. The DAG is built by the cwinpy that
+asimov runs in and is run by the cwinpy of the environment, so they should be the same version.
+And the DAG files record the path: changing the environment needs the DAG to be made again (a new
+project, or remove the `submit/` directory and `manifest.json` of the shard).
+
+**The jobs.** Set `shared filesystem: false` in the strategy:
+
+| Stage | What it does |
+|---|---|
+| `cwinpy-heterodyne` | nothing: cwinpy's DAG already transfers its own inputs and outputs, and does not use `getenv` |
+| `cwinpy-merge`, `cwinpy-summary` | run as `htcondor: universe: local` jobs, on the machine that asimov runs on, where the project is, with the Python that asimov runs in (which therefore needs this package and cwinpy). They are light. |
+| `cwinpy-pe` | `scheduler: transfer files: true`: HTCondor copies the configuration, prior, ephemeris and heterodyned data to the node, and the `results` directory comes back to the run directory. |
+
+For `cwinpy-pe` every path in the configuration is then the name of a file in the directory of the job
+(`par-file = J0534+2200.par`, `outdir = results`). The directory of the results is sent with the job
+from the start, so a job that stops itself to be started again (`periodic restart time`, which ends with
+the exit code 77 that asimov takes for a restart) gets its checkpoint back, and so that HTCondor never has an
+output that was not made, which it would put on hold. The files that are to be sent are checked to be
+there before the job is submitted, for the same reason. None of the jobs asks for `getenv`.
+
+What a job needs of its environment, besides what is in the software environment, is said with
+`scheduler: environment variables` (a mapping, which becomes HTCondor's `environment`), and the machines
+that may run it with `htcondor: requirements` (also given to the jobs of the heterodyne DAG). A pool
+that does allow it can have `htcondor: getenv: true`.
+
+These are all set on the blocks of the strategy as well (`heterodyne`, `merge`, `pe`, `summary`), and
+what they say is kept: `shared filesystem: false` only gives the defaults above.
+
+```yaml
+strategy:
+  type: cwinpy-run
+  shared filesystem: false
+  heterodyne: {scheduler: {environment: /cvmfs/software.igwn.org/conda/envs/igwn}}
+  pe: {scheduler: {environment: /cvmfs/software.igwn.org/conda/envs/igwn}}
+  # ...
+```
+
+The real `cwinpy_pe` has been run through an emulation of HTCondor's file transfer (with the project
+hidden while the job runs, and nothing inherited from the environment): it analyses, stops for a restart,
+is sent its checkpoint, resumes and finishes, and its results come back (`tests/test_transfer_cwinpy.py`).
+It has not been run on a pool, which is where the transfer of a directory both ways, `initialdir`
+and the local universe are still to be confirmed.
 
 ### Trying it at a smaller scale
 
@@ -160,6 +214,15 @@ Standard asimov keys keep their names (`interferometers`, `needs`,
 
 * `ephemeris`: the path to the pulsar's Tempo(2)-style `.par` file.
 * `frequency factors`: the factors of the rotation frequency to heterodyne at, e.g. `[1, 2]`.
+
+| Ledger key (any of the four analyses) | |
+|---|---|
+| `scheduler: environment` | the software environment of the analysis, instead of `[pipelines] environment` |
+| `scheduler: environment variables` | variables that are set in the job (as `environment`) |
+| `scheduler: transfer files` | `cwinpy-pe` only: have HTCondor transfer the files of the job |
+| `htcondor: universe` | `local` to run the job (merge, summary) on the machine that asimov runs on |
+| `htcondor: requirements` | the requirements of the jobs (a ClassAd expression) |
+| `htcondor: getenv` | `true` to give the jobs the environment of asimov (off unless set) |
 
 ### `cwinpy-heterodyne`
 

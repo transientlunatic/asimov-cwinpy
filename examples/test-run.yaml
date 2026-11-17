@@ -20,6 +20,10 @@ strategy:
   type: cwinpy-run
   interferometers: [H1, L1]
   frequency factors: [2]           # the l=m=2 harmonic only: half the heterodyne output
+  # If the execute nodes cannot see the project (or the home directory that it is in), and `getenv`
+  # is not allowed, uncomment the next line, and the `environment` of the `heterodyne` and `pe`
+  # blocks below: use an environment that the nodes see (here, an IGWN one on CVMFS with cwinpy).
+  # shared filesystem: false
   data start: 1368975618           # one day from the start of O4
   data end: 1369062018
   joblength: 21600                 # 6 hours: short jobs, so that a failed one is quickly run again
@@ -48,6 +52,7 @@ strategy:
       request memory: 8192MB
       request disk: 20GB
       accounting group: ligo.dev.o4.cw.targeted.bayesian
+      # environment: /cvmfs/software.igwn.org/conda/envs/igwn
     # Short enough to see the retry policy work in a test: three tries, a minute apart.
     retry: {attempts: 3, delay: 60}
   merge:
@@ -64,6 +69,7 @@ strategy:
     scheduler:
       request memory: 4096MB
       accounting group: ligo.dev.o4.cw.targeted.bayesian
+      # environment: /cvmfs/software.igwn.org/conda/envs/igwn
     retry: {attempts: 2, delay: 60}
   # The summary pages (one analysis, which needs both parameter estimations). It needs `cweqgen`.
   # If the plots of the time series or the upper limits fail, add
