@@ -407,6 +407,19 @@ Unverified, needs the pool (user and Matt):
 - Whether the CVMFS environment is sufficient (e.g. `LAL_DATA_PATH`); the emulator set only PATH and TMPDIR.
 - Held jobs: the plugin cannot see them, so a held node stays quiet until looked at.
 
+## What splitting shards by detector taught us
+
+- `split detectors: true` (strategy) gives each detector its own shard for each span, named
+  `shard-0007-H1`, with `interferometers` set on the analysis (it overrides the one of the event).
+  Nothing else had to change: the merge already joins by pulsar, detector and factor from whatever the
+  shards have, a detector that only some shards have was already a case, and the parameter estimation reads the merged files.
+- The real cwinpy builds and runs a DAG for a shard of one detector when the segment lists and
+  cache files name both (`tests/test_heterodyne_cwinpy.py`).
+- Off by default, so that the names of existing analyses do not change. The group cap of asimov
+  (500) is the limit: two detectors double the shards.
+- Not done: dropping a detector from a shard that has no data at all is now moot for split runs,
+  where such a shard just fails alone; for unsplit runs it is still the message of `why_no_dag`.
+
 ## Open questions
 
 - Does a heterodyne config for a sub-range of time reproduce the corresponding
