@@ -336,13 +336,38 @@ def test_the_environment_of_the_analysis_is_the_one_cwinpy_is_built_in_and_write
     assert str(theirs / "bin") not in fake_cwinpy.observed_path[0]
 
 
-def test_an_environment_that_is_not_there_is_not_put_on_the_path(project, tmp_path, fake_cwinpy):
+def test_an_environment_without_a_bin_directory_is_an_error(project, tmp_path, fake_cwinpy):
     pipeline = configured(
         project, tmp_path, extra_analysis=f"scheduler:\n  environment: {tmp_path / 'nothing'}\n"
     )
-    before = os.environ["PATH"]
-    pipeline.build_dag()
-    assert fake_cwinpy.observed_path[0] == before
+    with pytest.raises(PipelineException, match="has no bin directory"):
+        pipeline.build_dag()
+    assert not fake_cwinpy.built
+
+
+def test_jobs_that_run_another_environment_than_the_one_set_are_an_error(
+    project, tmp_path, fake_cwinpy
+):
+    mine = tmp_path / "mine"
+    (mine / "bin").mkdir(parents=True)
+    pipeline = configured(project, tmp_path, extra_analysis=f"scheduler:\n  environment: {mine}\n")
+    runner = types.SimpleNamespace(dag_file=str(tmp_path / "submit" / "x.dag"))
+    submit = tmp_path / "submit"
+    submit.mkdir()
+    (submit / "a.sub").write_text(f"executable = {mine}/bin/cwinpy_heterodyne\n")
+    pipeline.check_executables(runner)
+    (submit / "b.sub").write_text("executable = /home/me/.conda/envs/x/bin/cwinpy_heterodyne\n")
+    with pytest.raises(PipelineException, match="/home/me/.conda/envs/x/bin/cwinpy_heterodyne"):
+        pipeline.check_executables(runner)
+
+
+def test_the_executables_are_not_checked_without_an_environment(project, tmp_path, fake_cwinpy):
+    pipeline = configured(project, tmp_path)
+    submit = tmp_path / "submit"
+    submit.mkdir()
+    (submit / "b.sub").write_text("executable = /anywhere/cwinpy_heterodyne\n")
+    with patch("asimov_cwinpy.heterodyne.config.get", side_effect=KeyError("environment")):
+        pipeline.check_executables(types.SimpleNamespace(dag_file=str(submit / "x.dag")))
 
 
 def test_the_requirements_of_the_ledger_are_given_to_the_jobs_of_cwinpy(project):
