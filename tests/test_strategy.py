@@ -734,12 +734,15 @@ class TestSharedFilesystem:
         for pulsar in ("J0001+0001", "J0002+0002"):
             assert found[("analysis", pulsar, "pe")]["scheduler"] == {"transfer files": True}
 
-    def test_the_shards_are_not_changed_because_cwinpy_transfers_their_files_itself(self, pars):
+    def test_the_shards_are_told_that_the_nodes_do_not_see_the_project(self, pars):
         shared = self.documents(pars)
         without = self.documents(pars, **{"shared filesystem": False})
         for number in range(1, 6):
             key = ("analysis", "O4a-heterodyne", f"shard-000{number}")
-            assert shared[key] == without[key]
+            assert (
+                "scheduler" not in shared[key] or "transfer files" not in shared[key]["scheduler"]
+            )
+            assert without[key]["scheduler"]["transfer files"] is True
 
     def test_saying_that_there_is_one_is_the_default(self, pars):
         assert self.documents(pars, **{"shared filesystem": True}) == self.documents(pars)

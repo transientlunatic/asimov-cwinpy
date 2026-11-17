@@ -17,7 +17,7 @@ from asimov.scheduler_utils import create_job_from_dict
 from asimov.utils import set_directory
 
 from .common import CwinpyError, CwinpyPipeline
-from .jobs import executable_in, htcondor_options
+from .jobs import executable_in, htcondor_options, not_for_the_nodes
 from .priors import CwinpyPriorInterface
 
 #: The asset of ``cwinpy-merge``: ``{pulsar: {detector: {factor: path}}}``.
@@ -343,6 +343,9 @@ class PEPipeline(CwinpyPipeline):
                 f"Cannot find the cwinpy_pe executable{f' ({asked})' if asked else ''}.",
                 production=self.production.name,
             )
+        message = not_for_the_nodes(self.production, found)
+        if message:
+            raise PipelineException(message, production=self.production.name)
         return found
 
     def build_dag(self, dryrun=False):

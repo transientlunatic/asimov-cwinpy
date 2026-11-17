@@ -42,7 +42,7 @@ pipeline: cwinpy-pe
 event: J0534+2200
 sampler:
   sampler: dynesty
-  sampler kwargs: {{nlive: 100, dlogz: 1.0}}
+  sampler kwargs: {{nlive: {nlive}, dlogz: 1.0}}
 scheduler:
   transfer files: true
   environment: {environment}
@@ -59,11 +59,13 @@ scheduler:
 def job(project, tmp_path):
     """The pipeline of a pulsar, ready to be submitted, and what watches the scheduler."""
 
-    def make(scheduler=""):
+    def make(scheduler="", nlive=100):
         par = tmp_path / "ephemerides" / "J0534+2200.par"
         par.parent.mkdir()
         par.write_text(PAR)
-        project.apply(BLUEPRINT.format(par=par, environment=sys.prefix, scheduler=scheduler))
+        project.apply(
+            BLUEPRINT.format(par=par, environment=sys.prefix, scheduler=scheduler, nlive=nlive)
+        )
         pipeline = project.analysis("J0534+2200", "pe").pipeline
         # what asimov does when it builds: it makes the configuration from the template
         config = tmp_path / "repo" / "pe.ini"
@@ -124,8 +126,11 @@ def test_the_job_does_not_need_anything_that_is_inherited_from_the_environment_o
 
 def test_a_job_stopped_to_be_restarted_gets_its_checkpoint_back_and_finishes(job, tmp_path):
     # (cwinpy_pe stops itself, after `periodic restart time`, with the exit code 77 that asimov
-    # takes to mean that it is to be started again)
-    pipeline, scheduler = job(scheduler="  periodic restart time: 4\n")
+    # takes to mean that it is to be started again. The sampling is made long (500 live points,
+    # well over four seconds) so that the alarm is always in the middle of it: with the short run
+    # of the other tests a quick machine sometimes finished first, and the alarm then killed the
+    # job in its post-processing instead of stopping it to be restarted.)
+    pipeline, scheduler = job(scheduler="  periodic restart time: 4\n", nlive=500)
     first = minitransfer.run_job(submit(pipeline, scheduler), hide=[str(tmp_path)])
     assert first.returncode == 77, first.stderr[-3000:]
     results = os.path.join(pipeline.production.rundir, "results")

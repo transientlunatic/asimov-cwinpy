@@ -117,3 +117,29 @@ def test_the_analysis_type_brings_them_to_the_vocabulary():
     # and the standard terms that are used are asimov's own
     for name in ("transfer files", "environment", "environment variables"):
         assert vocabulary.lookup(f"scheduler.{name}") is not None, name
+
+
+# Where the execute nodes do not see the project, nor the home directory
+
+
+def on(**scheduler):
+    return production(scheduler=scheduler)
+
+
+def test_home_is_the_home_of_the_user_that_runs_asimov(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert jobs.in_home(str(tmp_path / ".conda" / "bin" / "python"))
+    assert jobs.in_home(str(tmp_path))
+    assert not jobs.in_home(str(tmp_path) + "-other/bin")
+    assert not jobs.in_home("/cvmfs/software.igwn.org/conda/envs/igwn/bin/cwinpy_pe")
+
+
+def test_a_home_executable_is_only_refused_where_the_nodes_do_not_see_the_project(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = str(tmp_path / ".conda" / "envs" / "x" / "bin" / "cwinpy_pe")
+    assert jobs.not_for_the_nodes(on(), path) is None
+    message = jobs.not_for_the_nodes(on(**{"transfer files": True}), path)
+    assert "home directory" in message and "scheduler: environment" in message
+    assert jobs.not_for_the_nodes(on(**{"transfer files": True}), "/cvmfs/igwn/bin/x") is None

@@ -38,7 +38,7 @@ from asimov.utils import set_directory
 
 from . import coverage
 from .common import CwinpyError, CwinpyPipeline, TransientCwinpyError
-from .jobs import software_environment
+from .jobs import not_for_the_nodes, software_environment
 
 #: The name cwinpy gives the DAG it writes.
 DAG_NAME = "cwinpy_heterodyne.dag"
@@ -420,8 +420,13 @@ class HeterodynePipeline(CwinpyPipeline):
         Raises
         ------
         PipelineException
-            If a job runs an executable from outside the software environment that is set.
+            If a job runs an executable from outside the software environment that is set, or, where
+            the execute nodes do not see the project, one in the home directory.
         """
+        directory = os.path.dirname(str(runner.dag_file))
+        for name in sorted(os.listdir(directory)):
+            if name.endswith(".sub"):
+                self._check_visible(os.path.join(directory, name))
         environment = software_environment(self.production)
         if not environment:
             return
@@ -429,7 +434,6 @@ class HeterodynePipeline(CwinpyPipeline):
             os.path.join(environment, "bin") + os.sep,
             os.path.join(os.path.realpath(environment), "bin") + os.sep,
         )
-        directory = os.path.dirname(str(runner.dag_file))
         wrong = set()
         for name in sorted(os.listdir(directory)):
             if not name.endswith(".sub"):
@@ -446,6 +450,16 @@ class HeterodynePipeline(CwinpyPipeline):
                 f"software environment {environment}. Install cwinpy there.",
                 production=self.production.name,
             )
+
+    def _check_visible(self, submit_file):
+        """Raise if a job is to run an executable that the execute nodes cannot see."""
+        with open(submit_file) as handle:
+            for line in handle:
+                key, _, value = line.partition("=")
+                if key.strip() == "executable":
+                    message = not_for_the_nodes(self.production, value.strip())
+                    if message:
+                        raise PipelineException(message, production=self.production.name)
 
     def _config_file(self):
         """The configuration that asimov has made, from the event repository."""
