@@ -61,6 +61,7 @@ OPTIONS = {
     "pulsars",
     "ephemeris directory",
     "shared filesystem",
+    "environment",
     "split detectors",
     "heterodyne",
     "merge",
@@ -156,7 +157,33 @@ class RunStrategy(Strategy):
         for key in ("shared filesystem", "split detectors"):
             if not isinstance(spec.get(key, key == "shared filesystem"), bool):
                 raise StrategyError(f"'{key}' must be true or false.")
+        self._validate_environment(spec)
         self.pulsars(spec)
+
+    @staticmethod
+    def _validate_environment(spec):
+        """
+        The software environment, which the jobs run from where the nodes do not see the project.
+
+        Raises
+        ------
+        StrategyError
+            If it is not a path, or if the nodes do not see the project and the heterodyne and
+            the parameter estimation are not each given one.
+        """
+        environment = spec.get("environment")
+        if environment is not None and (not isinstance(environment, str) or not environment):
+            raise StrategyError("'environment' must be the path of a software environment.")
+        if spec.get("shared filesystem", True) or environment:
+            return
+        for block in ("heterodyne", "pe"):
+            given = ((spec.get(block) or {}).get("scheduler") or {}).get("environment")
+            if not given:
+                raise StrategyError(
+                    "With 'shared filesystem: false' the jobs run from a software environment "
+                    "that the execute nodes see, such as an IGWN one on CVMFS: give it as "
+                    f"'environment' (or as scheduler: environment in the {block} block)."
+                )
 
     @staticmethod
     def _validate_detectors(spec):
@@ -360,6 +387,9 @@ class RunStrategy(Strategy):
         shared = spec.get("shared filesystem", True)
         on_this_machine = None if shared else {"universe": "local"}
         transferred = None if shared else {"transfer files": True}
+        # The software that the heterodyne and the parameter estimation run from.
+        environment = spec.get("environment")
+        software = {**(transferred or {}), **({"environment": environment} if environment else {})}
         batches = self.pulsars(spec, fetch=True, logger=context.logger)
         if any(isinstance(e, dict) and e.get("source") == "atnf" for e in spec["pulsars"]):
             context.logger.warning(
@@ -390,7 +420,7 @@ class RunStrategy(Strategy):
                     "event": run,
                     **({"interferometers": shard_detectors} if suffix else {}),
                     **self._tail(heterodyne, "data"),
-                    **self._job(heterodyne, scheduler=transferred),
+                    **self._job(heterodyne, scheduler=software or None),
                     "cwinpy-heterodyne": {
                         **deepcopy(heterodyne.get("settings") or {}),
                         "data start": first,
@@ -433,7 +463,7 @@ class RunStrategy(Strategy):
                         "event": name,
                         "needs": [f"{run}/{merges[batch]}"],
                         **self._tail(pe, "sampler"),
-                        **self._job(pe, scheduler=transferred),
+                        **self._job(pe, scheduler=software or None),
                         **({"cwinpy-pe": deepcopy(pe["settings"])} if pe.get("settings") else {}),
                     }
                 )

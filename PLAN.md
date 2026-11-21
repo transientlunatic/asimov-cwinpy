@@ -431,6 +431,17 @@ Unverified, needs the pool (user and Matt):
 - The restart test with the real `cwinpy_pe` was racy (a quick run finished before its 4 s alarm and
   was killed by the alarm in the post-processing, exit -14, not 77). It uses 500 live points now.
 
+## What the pool taught us about the software environment
+
+- A strategy-level `environment` is the software that the heterodyne and the PE run from, and is
+  required with `shared filesystem: false`, because forgetting it, or having shards that were made
+  before the setting, ran executables in a home directory that the nodes do not see (three trials).
+- The OSDF transfer works on the pool with the same lines that cwinpy writes (checked with small
+  jobs by hand); the hold that said `plugin for type osdf not found` was probably from a pool in the
+  middle of an upgrade, but that is not shown. The disk is not small: a 4096 s frame is 1.57 GB, so
+  a job of 15 of them needs about 24 GB, and cwinpy raises `request_disk` itself only if it can
+  look up the sizes.
+
 ## Open questions
 
 - Does a heterodyne config for a sub-range of time reproduce the corresponding

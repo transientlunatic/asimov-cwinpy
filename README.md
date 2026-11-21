@@ -66,6 +66,7 @@ strategy:
 | `interferometers`, `data start`, `data end`, `shards`, `pulsars` | Required. `frequency factors` defaults to `[1, 2]`; `run` names the run subject (default `<name>-heterodyne`); `joblength` is the length of data one job reads (default a day). |
 | `ephemeris directory` | Where ephemerides that are fetched are put (`ephemerides`, in the project, unless it says). |
 | `shared filesystem` | `false` if the execute nodes cannot see the project: see [Clusters whose nodes do not see the project](#clusters-whose-nodes-do-not-see-the-project). Default `true`. |
+| `environment` | The software environment that the heterodyne and the parameter estimation run from (a path with `bin/` in it, such as an IGWN one on CVMFS). Needed with `shared filesystem: false`; a block's own `scheduler: environment` wins. |
 | `split detectors` | `true` for one shard of each detector for each span of time, instead of one shard of all the detectors. Default `false`. See [Splitting shards by detector](#splitting-shards-by-detector). |
 | `heterodyne` | `data`, `scheduler` and `retry` go on every shard as they are; `settings` goes under `cwinpy-heterodyne:` (`strict data requirement`, `segment lists`, ...). |
 | `merge` | `scheduler`, `retry`. |
@@ -132,7 +133,7 @@ CVMFS that has cwinpy. It is where cwinpy finds the executables that it writes i
 heterodyne, and where `cwinpy_pe` is run from. With `shared filesystem: false`, a heterodyne or PE job that would run an executable in the home
 directory of the user that asimov runs as is refused, with a message, because the execute nodes do not see it. The
 `[pipelines] environment` of a project is usually the environment that asimov itself runs in (in a home
-directory), so on such a cluster set `scheduler: environment` on the `heterodyne` and `pe` blocks, as in `examples/test-run.yaml`.
+directory), so on such a cluster set the strategy's `environment` (or `scheduler: environment` on the `heterodyne` and `pe` blocks), as in `examples/test-run.yaml`.
 Two things follow. The DAG is built by the cwinpy that
 asimov runs in and is run by the cwinpy of the environment, so they should be the same version.
 And the DAG files record the path: changing the environment needs the DAG to be made again (a new
@@ -165,10 +166,12 @@ what they say is kept: `shared filesystem: false` only gives the defaults above.
 strategy:
   type: cwinpy-run
   shared filesystem: false
-  heterodyne: {scheduler: {environment: /cvmfs/software.igwn.org/conda/envs/igwn}}
-  pe: {scheduler: {environment: /cvmfs/software.igwn.org/conda/envs/igwn}}
+  environment: /cvmfs/software.igwn.org/conda/envs/igwn   # the one the nodes see; needed
   # ...
 ```
+
+Without `environment` (or one on each of the `heterodyne` and `pe` blocks), `shared filesystem: false` is refused
+when the blueprint is applied.
 
 The real `cwinpy_pe` has been run through an emulation of HTCondor's file transfer (with the project
 hidden while the job runs, and nothing inherited from the environment): it analyses, stops for a restart,
