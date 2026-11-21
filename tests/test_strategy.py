@@ -896,6 +896,65 @@ class TestSplitDetectors:
         RunStrategy().validate(spec(pars, **{"split detectors": True}))
 
 
+IGWN = "/cvmfs/software.igwn.org/conda/envs/igwn"
+
+
+class TestEnvironment:
+    def documents(self, pars, **changes):
+        return by_name(expand(spec(pars, **changes)))
+
+    def test_the_environment_is_the_one_the_heterodyne_and_the_pe_run_from(self, pars):
+        found = self.documents(pars, environment=IGWN)
+        shard = found[("analysis", "O4a-heterodyne", "shard-0001")]
+        assert shard["scheduler"]["environment"] == IGWN
+        assert found[("analysis", "J0001+0001", "pe")]["scheduler"]["environment"] == IGWN
+
+    def test_the_light_jobs_do_not_get_it(self, pars):
+        found = self.documents(pars, environment=IGWN, summary=True)
+        for key in (
+            ("analysis", "O4a-heterodyne", "merge"),
+            ("analysis", "O4a-heterodyne", "summary"),
+        ):
+            assert "environment" not in found[key].get("scheduler", {})
+
+    def test_without_a_shared_filesystem_it_is_added_to_the_transfer_settings(self, pars):
+        found = self.documents(pars, environment=IGWN, **{"shared filesystem": False})
+        shard = found[("analysis", "O4a-heterodyne", "shard-0001")]
+        assert shard["scheduler"]["environment"] == IGWN
+        assert shard["scheduler"]["transfer files"] is True
+
+    def test_what_a_block_says_wins(self, pars):
+        mine = "/cvmfs/other"
+        found = self.documents(
+            pars, environment=IGWN, heterodyne={"scheduler": {"environment": mine}}
+        )
+        assert (
+            found[("analysis", "O4a-heterodyne", "shard-0001")]["scheduler"]["environment"] == mine
+        )
+        assert found[("analysis", "J0001+0001", "pe")]["scheduler"]["environment"] == IGWN
+
+    def test_without_one_nothing_is_said(self, pars):
+        shard = self.documents(pars)[("analysis", "O4a-heterodyne", "shard-0001")]
+        assert "environment" not in shard.get("scheduler", {})
+
+    def test_it_is_needed_where_the_nodes_do_not_see_the_project(self, pars):
+        with pytest.raises(StrategyError, match="environment"):
+            RunStrategy().validate(spec(pars, **{"shared filesystem": False}))
+        RunStrategy().validate(spec(pars, environment=IGWN, **{"shared filesystem": False}))
+
+    def test_each_block_can_give_it_instead(self, pars):
+        blocks = {"scheduler": {"environment": IGWN}}
+        both = {"heterodyne": blocks, "pe": blocks, "shared filesystem": False}
+        RunStrategy().validate(spec(pars, **both))
+        with pytest.raises(StrategyError, match="pe block"):
+            RunStrategy().validate(spec(pars, heterodyne=blocks, **{"shared filesystem": False}))
+
+    def test_it_is_a_path(self, pars):
+        for bad in ("", 3, ["a"]):
+            with pytest.raises(StrategyError, match="environment"):
+                RunStrategy().validate(spec(pars, environment=bad))
+
+
 class TestApplied:
     def test_everything_is_made(self, project, pars):
         project.apply(blueprint(pars, "J0001+0001", "J0002+0002"))
@@ -958,6 +1017,13 @@ class TestApplied:
         assert analyses(project, "J0001+0001")["pe"].meta["interferometers"] == ["H1", "L1"]
         merge = found["merge"]
         assert len(merge.dependency_objects) == 8
+
+    def test_the_environment_arrives_in_the_analyses_that_run_from_it(self, project, pars):
+        project.apply(blueprint(pars, "J0001+0001", extra=f"  environment: {IGWN}\n"))
+        shard = analyses(project, "O4a-heterodyne")["shard-0001"]
+        assert shard.meta["scheduler"]["environment"] == IGWN
+        assert shard.meta["scheduler"]["request memory"] == "16384MB"  # beside what is said there
+        assert analyses(project, "J0001+0001")["pe"].meta["scheduler"]["environment"] == IGWN
 
     def test_the_needs_are_found(self, project, pars):
         project.apply(blueprint(pars, "J0001+0001"))
